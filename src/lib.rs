@@ -76,9 +76,9 @@ pub fn start() {
     let sprites: Rc<RefCell<HashMap<&'static str, HtmlImageElement>>> =
         Rc::new(RefCell::new(HashMap::new()));
     let loaded = Rc::new(RefCell::new(0u32));
-    const TOTAL: u32 = 5;
+    const TOTAL: u32 = 7;
 
-    for name in ["crab", "crab_f2", "squid", "octopus", "ship"] {
+    for name in ["crab", "crab_f2", "squid", "squid_f2", "octopus", "octopus_f2", "ship"] {
         let img = HtmlImageElement::new().expect("failed to create image");
         img.set_src(&format!("assets/{name}.png"));
 
@@ -218,9 +218,9 @@ fn draw_scene(
 
     for alien in state.aliens.iter().filter(|a| a.alive) {
         let sprite_name = match alien.sprite {
-            AlienKind::Crab    => if state.grid.anim_frame { "crab_f2" } else { "crab" },
-            AlienKind::Squid   => "squid",
-            AlienKind::Octopus => "octopus",
+            AlienKind::Crab    => if state.grid.anim_frame { "crab_f2"    } else { "crab"    },
+            AlienKind::Squid   => if state.grid.anim_frame { "squid_f2"   } else { "squid"   },
+            AlienKind::Octopus => if state.grid.anim_frame { "octopus_f2" } else { "octopus" },
         };
         if let Some(img) = sprites.get(sprite_name) {
             let cell_x = grid_left + alien.col as f64 * CELL_W;
