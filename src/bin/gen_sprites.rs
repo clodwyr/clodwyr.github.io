@@ -83,37 +83,37 @@ const OCTOPUS: &[&str] = &[
 
 // 16×8 sprite — scale=4 (matches crab)
 const CRAB_EXP: &[&str] = &[
-    ".....#....#.....",
-    "#...........#...",
-    "..#..#..#..#....",
-    "....#.....#.....",
-    "....#.....#.....",
-    "..#..#..#..#....",
-    "#...........#...",
-    ".....#....#.....",
+    "......#....#....",
+    ".#...........#..",
+    "...#..#..#..#...",
+    "....#......#....",
+    "....#......#....",
+    "...#..#..#..#...",
+    ".#...........#..",
+    "......#....#....",
 ];
 
 // 10×8 sprite — scale=5 (matches squid)
 const SQUID_EXP: &[&str] = &[
-    "..#...#...",
-    "#.......#.",
-    "...#.#....",
-    "...###....",
-    "...###....",
-    "...#.#....",
-    "#.......#.",
-    "..#...#...",
+    "..#....#..",
+    "#........#",
+    "...#..#...",
+    "....##....",
+    "....##....",
+    "...#..#...",
+    "#........#",
+    "..#....#..",
 ];
 
 // 12×8 sprite — scale=5 (matches octopus)
 const OCTOPUS_EXP: &[&str] = &[
     "..#.....#...",
-    "#...#.#...#.",
-    "....#.#.....",
+    "#...#.....#.",
+    "......#.....",
+    ".....#......",
     "...#...#....",
-    "...#...#....",
-    "....#.#.....",
-    "#...#.#...#.",
+    "......#.....",
+    "#...#.....#.",
     "..#.....#...",
 ];
 
@@ -169,16 +169,21 @@ fn save_sprite(name: &str, scale: u32, colour: Rgba<u8>, pixels: &[&str]) {
 // ── Generate ─────────────────────────────────────────────────────────────────
 
 fn main() {
+    //Crab
     save_sprite("crab",        4, GREEN, CRAB);
     save_sprite("crab_f2",     4, GREEN, CRAB_FRAME_2);
     save_sprite("crab_white",  4, WHITE, CRAB);
+    save_sprite("crab_exp",    4, WHITE, CRAB_EXP);
+    //Squid
     save_sprite("squid",       5, GREEN, SQUID);
-    save_sprite("squid_f2",       5, GREEN, SQUID_FRAME_2);
+    save_sprite("squid_f2",    5, GREEN, SQUID_FRAME_2);
+    save_sprite("squid_exp",   5, WHITE, SQUID_EXP);
+    //Octopus
     save_sprite("octopus",     5, GREEN, OCTOPUS);
     save_sprite("octopus_f2",  5, GREEN, OCTOPUS_FRAME_2);
-    save_sprite("ufo",         5, GREEN, UFO);
-    save_sprite("ship",        5, GREEN, SHIP);
-    save_sprite("crab_exp",    4, WHITE, CRAB_EXP);
-    save_sprite("squid_exp",   5, WHITE, SQUID_EXP);
     save_sprite("octopus_exp", 5, WHITE, OCTOPUS_EXP);
+    //Special
+    save_sprite("ufo",         5, GREEN, UFO);
+    //Player
+    save_sprite("ship",        5, GREEN, SHIP);
 }
