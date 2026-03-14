@@ -309,6 +309,31 @@ pub fn check_invasion(state: &mut GameState, grid_top: f64) {
     }
 }
 
+/// Frames the "LEVEL CLEAR" screen is shown before loading the next level — easy to tune.
+pub const LEVEL_CLEAR_PAUSE: u32 = 120; // ~2 s at 60 fps
+
+/// If all aliens are dead and the game is still Playing, transition to LevelClear
+/// and reset the pause timer. Call every frame during the Playing phase.
+pub fn check_level_clear(state: &mut GameState) {
+    if state.phase != GamePhase::Playing { return; }
+    if all_aliens_dead(state) {
+        state.phase = GamePhase::LevelClear;
+        state.pause_timer = 0;
+    }
+}
+
+/// Advance the pause timer while in the LevelClear phase.
+/// When the timer reaches LEVEL_CLEAR_PAUSE, loads the next level and
+/// returns to Playing. Does nothing in any other phase.
+pub fn tick_level_clear(state: &mut GameState) {
+    if state.phase != GamePhase::LevelClear { return; }
+    state.pause_timer += 1;
+    if state.pause_timer >= LEVEL_CLEAR_PAUSE {
+        advance_level(state);
+        state.phase = GamePhase::Playing;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
