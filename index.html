@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Space Invaders</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas">
+    <!-- Static fallback for browsers without Canvas/WebAssembly support -->
+    <img src="space-invaders.jpg" alt="Space Invaders" width="800" />
+  </canvas>
+  <link data-trunk rel="rust" data-wasm-opt="z" />
+  <link data-trunk rel="copy-file" href="space-invaders.jpg" />
+</body>
+</html>
