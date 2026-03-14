@@ -1223,6 +1223,105 @@ mod tests {
         state.aliens[0].explosion_timer = 5;
         assert!(all_aliens_dead(&state));
     }
+
+    // ── Pause / quit tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn pause_game_transitions_playing_to_paused() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
+        pause_game(&mut state);
+        assert_eq!(state.phase, GamePhase::Paused);
+    }
+
+    #[test]
+    fn pause_game_transitions_paused_to_playing() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Paused;
+        pause_game(&mut state);
+        assert_eq!(state.phase, GamePhase::Playing);
+    }
+
+    #[test]
+    fn pause_game_does_nothing_outside_playing_and_paused() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::GameOver;
+        pause_game(&mut state);
+        assert_eq!(state.phase, GamePhase::GameOver);
+    }
+
+    #[test]
+    fn quit_game_resets_to_attract() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
+        state.score = 100;
+        quit_game(&mut state);
+        assert_eq!(state.phase, GamePhase::Attract);
+        assert_eq!(state.score, 0);
+    }
+
+    // ── Multi-bullet tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn fire_alien_bullet_can_fire_second_when_first_in_flight() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        state.alien_bullets.push(AlienBullet { x: 999.0, y: 999.0 });
+        fire_alien_bullet(&mut state, 5, 0.0, 0.0);
+        assert_eq!(state.alien_bullets.len(), 2);
+    }
+
+    #[test]
+    fn fire_alien_bullet_capped_at_max_alien_bullets() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        for _ in 0..MAX_ALIEN_BULLETS {
+            state.alien_bullets.push(AlienBullet { x: 0.0, y: 0.0 });
+        }
+        fire_alien_bullet(&mut state, 0, 0.0, 0.0);
+        assert_eq!(state.alien_bullets.len(), MAX_ALIEN_BULLETS);
+    }
+
+    #[test]
+    fn step_alien_bullets_moves_all() {
+        let mut state = GameState::new(800, 600);
+        state.alien_bullets = vec![
+            AlienBullet { x: 100.0, y: 50.0 },
+            AlienBullet { x: 200.0, y: 80.0 },
+        ];
+        step_alien_bullets(&mut state, 600.0);
+        assert!(state.alien_bullets.iter().all(|b| b.y > 80.0));
+    }
+
+    #[test]
+    fn step_alien_bullets_clears_bullets_past_canvas_bottom() {
+        let mut state = GameState::new(800, 600);
+        state.alien_bullets = vec![
+            AlienBullet { x: 100.0, y: 598.0 }, // will step past 600
+            AlienBullet { x: 200.0, y: 10.0 },  // stays in play
+        ];
+        step_alien_bullets(&mut state, 600.0);
+        assert_eq!(state.alien_bullets.len(), 1);
+        assert_eq!(state.alien_bullets[0].x, 200.0);
+    }
+
+    #[test]
+    fn check_alien_hit_ship_removes_hitting_bullet_from_vec() {
+        let mut state = GameState::new(800, 600);
+        state.lives = 3;
+        state.alien_bullets = vec![
+            AlienBullet { x: -999.0, y: -999.0 },
+            AlienBullet { x: state.ship.x, y: state.ship.y },
+        ];
+        check_alien_hit_ship(&mut state);
+        assert_eq!(state.lives, 2);
+        assert_eq!(state.alien_bullets.len(), 1);
+    }
+
+    #[test]
+    fn ship_bullet_step_is_faster_than_alien_bullet_step() {
+        assert!(BULLET_STEP > ALIEN_BULLET_STEP);
+    }
 }
 
 /// Level grid pattern: 5 rows × 11 columns.
