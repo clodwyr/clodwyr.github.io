@@ -2,10 +2,10 @@ pub mod game;
 
 use game::{
     check_alien_hit_ship, check_bullet_hit, check_invasion, check_level_clear, fire,
-    fire_alien_bullet, move_ship, reset_game, step_alien_bullet, step_bullet, step_grid,
-    tick_explosions, tick_game_over, tick_level_clear, AlienKind, ClassicSpeed, CrispMovement,
-    Direction, GamePhase, GameState, CELL_H, CELL_W, GAME_OVER_PAUSE, GRID_COLS, GRID_W,
-    PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
+    fire_alien_bullet, move_ship, pause_game, quit_game, reset_game, step_alien_bullets,
+    step_bullet, step_grid, tick_explosions, tick_game_over, tick_level_clear, AlienKind,
+    ClassicSpeed, CrispMovement, Direction, GamePhase, GameState, CELL_H, CELL_W, GAME_OVER_PAUSE,
+    GRID_COLS, GRID_W, PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -140,18 +140,26 @@ fn start_loop(
     const ALIEN_FIRE_INTERVAL: u32 = 90; // ~1.5 s at 60 fps — easy to tune
     let frame: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
 
-    // Track whether space was held last frame to detect a fresh press.
+    // Track prior-frame key state for rising-edge (fresh-press) detection.
     let mut space_was_held = false;
+    let mut p_was_held = false;
+    let mut q_was_held = false;
 
     *raf_cb_init.borrow_mut() = Some(Closure::wrap(Box::new(move || {
         // ── Update ────────────────────────────────────────────────────────────
         {
             let mut s = state.borrow_mut();
 
-            // Detect fresh space press (rising edge only — not a held key).
+            // Detect fresh key presses (rising edge — not held keys).
             let space_now = keys.borrow().contains_key(" ");
+            let p_now     = keys.borrow().contains_key("p") || keys.borrow().contains_key("P");
+            let q_now     = keys.borrow().contains_key("q") || keys.borrow().contains_key("Q");
             let space_just_pressed = space_now && !space_was_held;
+            let p_just_pressed     = p_now && !p_was_held;
+            let q_just_pressed     = q_now && !q_was_held;
             space_was_held = space_now;
+            p_was_held = p_now;
+            q_was_held = q_now;
 
             if space_just_pressed {
                 match s.phase {
@@ -162,6 +170,12 @@ fn start_loop(
                     }
                     _ => {}
                 }
+            }
+            if p_just_pressed {
+                pause_game(&mut s);
+            }
+            if q_just_pressed {
+                quit_game(&mut s);
             }
 
             if s.phase == GamePhase::Playing {
@@ -194,12 +208,10 @@ fn start_loop(
                 check_alien_hit_ship(&mut s);
                 // Bullet clears when it passes below the ship, not the canvas bottom
                 let bullet_floor = s.ship.y + SHIP_HALF_H;
+                step_alien_bullets(&mut s, bullet_floor);
                 if f % ALIEN_FIRE_INTERVAL == 0 {
                     let col = (f / ALIEN_FIRE_INTERVAL) % GRID_COLS;
-                    step_alien_bullet(&mut s, bullet_floor);
                     fire_alien_bullet(&mut s, col, cur_grid_left, cur_grid_top);
-                } else {
-                    step_alien_bullet(&mut s, bullet_floor);
                 }
                 check_invasion(&mut s, grid_top);
                 check_level_clear(&mut s);
@@ -285,9 +297,9 @@ fn draw_scene(
         ctx.fill_rect(b.x - 1.5, b.y - 12.0, 3.0, 12.0);
     }
 
-    // Alien bullet — 3×12px red rect
-    if let Some(ref ab) = state.alien_bullet {
-        ctx.set_fill_style_str("#ff4444");
+    // Alien bullets — 3×12px red rects
+    ctx.set_fill_style_str("#ff4444");
+    for ab in &state.alien_bullets {
         ctx.fill_rect(ab.x - 1.5, ab.y, 3.0, 12.0);
     }
 
@@ -302,6 +314,20 @@ fn draw_scene(
             .expect("fill_text failed");
         ctx.set_font("bold 24px monospace");
         ctx.fill_text("PRESS SPACE TO START", viewport_w / 2.0, viewport_h / 2.0 + 30.0)
+            .expect("fill_text failed");
+    }
+
+    // Paused overlay
+    if state.phase == GamePhase::Paused {
+        ctx.set_fill_style_str("rgba(0,0,0,0.55)");
+        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.set_fill_style_str("#68fb35");
+        ctx.set_text_align("center");
+        ctx.set_font("bold 64px monospace");
+        ctx.fill_text("PAUSED", viewport_w / 2.0, viewport_h / 2.0 - 20.0)
+            .expect("fill_text failed");
+        ctx.set_font("bold 20px monospace");
+        ctx.fill_text("P — RESUME   Q — QUIT", viewport_w / 2.0, viewport_h / 2.0 + 40.0)
             .expect("fill_text failed");
     }
 
