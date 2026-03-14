@@ -764,6 +764,43 @@ pub const LEVEL_1: LevelPattern = &[
     "OOOOOOOOOOO",
 ];
 
+/// Level 2: squids fill the top two rows, crabs the middle, octopuses at the bottom.
+/// Denser squid presence makes it harder (squids score higher in classic SI).
+pub const LEVEL_2: LevelPattern = &[
+    "SSSSSSSSSSS",
+    "SSSSSSSSSSS",
+    "CCCCCCCCCCC",
+    "OOOOOOOOOOO",
+    "OOOOOOOOOOO",
+];
+
+/// Level 3: all squids — maximum difficulty.
+pub const LEVEL_3: LevelPattern = &[
+    "SSSSSSSSSSS",
+    "SSSSSSSSSSS",
+    "SSSSSSSSSSS",
+    "CCCCCCCCCCC",
+    "OOOOOOOOOOO",
+];
+
+/// All levels in order. `advance_level` cycles through these and wraps back to 0.
+pub const LEVELS: &[LevelPattern] = &[LEVEL_1, LEVEL_2, LEVEL_3];
+
+/// Returns `true` if every alien in the grid is dead (or the grid is empty).
+pub fn all_aliens_dead(state: &GameState) -> bool {
+    state.aliens.iter().all(|a| !a.alive)
+}
+
+/// Advance to the next level: increment `state.level` (wrapping), load the
+/// corresponding alien grid, reset grid motion, and clear any in-flight bullets.
+pub fn advance_level(state: &mut GameState) {
+    state.level = (state.level + 1) % LEVELS.len();
+    state.aliens = build_alien_grid(LEVELS[state.level]);
+    state.grid = GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1 };
+    state.bullet = None;
+    state.alien_bullet = None;
+}
+
 pub fn build_alien_grid(pattern: LevelPattern) -> Vec<Alien> {
     let mut aliens = Vec::new();
     for (row, line) in pattern.iter().enumerate() {
