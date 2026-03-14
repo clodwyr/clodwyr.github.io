@@ -1,11 +1,10 @@
 pub mod game;
 
 use game::{
-    build_alien_grid, check_alien_hit_ship, check_bullet_hit, check_invasion,
-    check_level_clear, fire, fire_alien_bullet, move_ship, step_alien_bullet, step_bullet,
-    step_grid, tick_level_clear, AlienKind, ClassicSpeed, CrispMovement, Direction,
-    GamePhase, GameState, CELL_H, CELL_W, GRID_COLS, GRID_W, LEVEL_1, PLAY_MARGIN,
-    SHIP_HALF_H, SHIP_STEP,
+    check_alien_hit_ship, check_bullet_hit, check_invasion, check_level_clear, fire,
+    fire_alien_bullet, move_ship, reset_game, step_alien_bullet, step_bullet, step_grid,
+    tick_level_clear, AlienKind, ClassicSpeed, CrispMovement, Direction, GamePhase,
+    GameState, CELL_H, CELL_W, GRID_COLS, GRID_W, PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -43,8 +42,6 @@ pub fn start() {
     let state = Rc::new(RefCell::new(
         GameState::new(viewport_w as u32, viewport_h as u32)
     ));
-    state.borrow_mut().aliens = build_alien_grid(LEVEL_1);
-
     // Key state: which keys are currently held
     let keys: Rc<RefCell<HashMap<String, bool>>> = Rc::new(RefCell::new(HashMap::new()));
 
@@ -145,6 +142,17 @@ fn start_loop(
         // ── Update ────────────────────────────────────────────────────────────
         {
             let mut s = state.borrow_mut();
+
+            // Space starts/restarts from Attract or GameOver
+            {
+                let held = keys.borrow();
+                if held.contains_key(" ") {
+                    match s.phase {
+                        GamePhase::Attract | GamePhase::GameOver => reset_game(&mut s),
+                        _ => {}
+                    }
+                }
+            }
 
             if s.phase == GamePhase::Playing {
                 let held = keys.borrow();
@@ -263,6 +271,20 @@ fn draw_scene(
         ctx.fill_rect(ab.x - 1.5, ab.y, 3.0, 12.0);
     }
 
+    // Attract screen
+    if state.phase == GamePhase::Attract {
+        ctx.set_fill_style_str("rgba(0,0,0,0.75)");
+        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.set_fill_style_str("#68fb35");
+        ctx.set_text_align("center");
+        ctx.set_font("bold 64px monospace");
+        ctx.fill_text("SPACE INVADERS", viewport_w / 2.0, viewport_h / 2.0 - 40.0)
+            .expect("fill_text failed");
+        ctx.set_font("bold 24px monospace");
+        ctx.fill_text("PRESS SPACE TO START", viewport_w / 2.0, viewport_h / 2.0 + 30.0)
+            .expect("fill_text failed");
+    }
+
     // Level clear overlay
     if state.phase == GamePhase::LevelClear {
         ctx.set_fill_style_str("rgba(0,0,0,0.45)");
@@ -279,9 +301,12 @@ fn draw_scene(
         ctx.set_fill_style_str("rgba(0,0,0,0.55)");
         ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
         ctx.set_fill_style_str("#68fb35");
-        ctx.set_font("bold 64px monospace");
         ctx.set_text_align("center");
-        ctx.fill_text("GAME OVER", viewport_w / 2.0, viewport_h / 2.0)
+        ctx.set_font("bold 64px monospace");
+        ctx.fill_text("GAME OVER", viewport_w / 2.0, viewport_h / 2.0 - 40.0)
+            .expect("fill_text failed");
+        ctx.set_font("bold 24px monospace");
+        ctx.fill_text("PRESS SPACE TO PLAY AGAIN", viewport_w / 2.0, viewport_h / 2.0 + 30.0)
             .expect("fill_text failed");
     }
 

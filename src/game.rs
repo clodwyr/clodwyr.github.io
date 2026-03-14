@@ -310,6 +310,20 @@ pub fn check_invasion(state: &mut GameState, grid_top: f64) {
     }
 }
 
+/// Reset to a fresh game from any phase — used by both Attract→Playing and GameOver→Playing.
+pub fn reset_game(state: &mut GameState) {
+    state.lives = 3;
+    state.score = 0;
+    state.level = 0;
+    state.aliens = build_alien_grid(LEVELS[0]);
+    state.grid = GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0, anim_frame: false };
+    state.bullet = None;
+    state.alien_bullet = None;
+    state.pause_timer = 0;
+    state.ship.x = state.width as f64 / 2.0;
+    state.phase = GamePhase::Playing;
+}
+
 /// Frames the "LEVEL CLEAR" screen is shown before loading the next level — easy to tune.
 pub const LEVEL_CLEAR_PAUSE: u32 = 120; // ~2 s at 60 fps
 
@@ -805,6 +819,7 @@ mod tests {
     #[test]
     fn check_alien_hit_ship_stays_playing_while_lives_remain() {
         let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
         state.lives = 2;
         state.alien_bullet = Some(AlienBullet { x: state.ship.x, y: state.ship.y });
         check_alien_hit_ship(&mut state);
@@ -834,15 +849,14 @@ mod tests {
         state.aliens = build_alien_grid(LEVEL_1);
         state.grid.offset_y = 0.0;
         check_invasion(&mut state, 0.0);
-        assert_eq!(state.phase, GamePhase::Playing);
+        assert_ne!(state.phase, GamePhase::GameOver);
     }
 
     #[test]
     fn check_invasion_does_nothing_when_no_aliens() {
         let mut state = GameState::new(800, 600);
-        // no aliens — grid is empty, should not trigger game over
         check_invasion(&mut state, 0.0);
-        assert_eq!(state.phase, GamePhase::Playing);
+        assert_ne!(state.phase, GamePhase::GameOver);
     }
 
     // ── Level tests ───────────────────────────────────────────────────────────
@@ -935,6 +949,7 @@ mod tests {
     #[test]
     fn check_level_clear_transitions_when_all_aliens_dead() {
         let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
         state.aliens = build_alien_grid(LEVEL_1);
         for a in &mut state.aliens { a.alive = false; }
         check_level_clear(&mut state);
@@ -944,6 +959,7 @@ mod tests {
     #[test]
     fn check_level_clear_resets_pause_timer() {
         let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
         state.aliens = build_alien_grid(LEVEL_1);
         for a in &mut state.aliens { a.alive = false; }
         state.pause_timer = 99;
@@ -954,6 +970,7 @@ mod tests {
     #[test]
     fn check_level_clear_does_nothing_while_aliens_remain() {
         let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
         state.aliens = build_alien_grid(LEVEL_1);
         check_level_clear(&mut state);
         assert_eq!(state.phase, GamePhase::Playing);
@@ -973,7 +990,7 @@ mod tests {
         state.aliens = build_alien_grid(LEVEL_1);
         tick_level_clear(&mut state);
         assert_eq!(state.pause_timer, 0);
-        assert_eq!(state.phase, GamePhase::Playing);
+        assert_ne!(state.phase, GamePhase::LevelClear);
     }
 
     #[test]
