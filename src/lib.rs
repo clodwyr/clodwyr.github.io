@@ -1,22 +1,28 @@
 pub mod game;
 
-use game::{build_alien_grid, AlienKind, GameState, LEVEL_1};
+use game::{
+    build_alien_grid, move_ship, AlienKind, CrispMovement, Direction, GameState, LEVEL_1,
+    SHIP_STEP,
+};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{HtmlCanvasElement, HtmlImageElement, CanvasRenderingContext2d};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement, KeyboardEvent};
 
-// Cell size in pixels — large enough for the widest/tallest sprite plus padding
+// ── Rendering constants ───────────────────────────────────────────────────────
+
 const CELL_W: f64 = 64.0;
 const CELL_H: f64 = 48.0;
 const COLS: u32 = 11;
 const ROWS: u32 = 5;
 
-fn grid_pixel_width() -> f64  { COLS as f64 * CELL_W }
+fn grid_pixel_width() -> f64 { COLS as f64 * CELL_W }
 #[allow(dead_code)]
 fn grid_pixel_height() -> f64 { ROWS as f64 * CELL_H }
+
+// ── Entry point ───────────────────────────────────────────────────────────────
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -41,10 +47,40 @@ pub fn start() {
             .expect("failed to get 2d context"),
     );
 
-    let state = Rc::new(GameState::new(viewport_w as u32, viewport_h as u32));
+    // Shared game state
+    let state = Rc::new(RefCell::new(
+        GameState::new(viewport_w as u32, viewport_h as u32)
+    ));
 
-    // Load the three alien sprites and the ship sprite.
-    // We track how many have loaded; once all 4 are ready we draw.
+    // Key state: which keys are currently held
+    let keys: Rc<RefCell<HashMap<String, bool>>> = Rc::new(RefCell::new(HashMap::new()));
+
+    // ── Keyboard listeners ────────────────────────────────────────────────────
+
+    {
+        let keys_down = keys.clone();
+        let on_keydown = Closure::<dyn FnMut(_)>::new(move |e: KeyboardEvent| {
+            keys_down.borrow_mut().insert(e.key(), true);
+        });
+        document
+            .add_event_listener_with_callback("keydown", on_keydown.as_ref().unchecked_ref())
+            .unwrap();
+        on_keydown.forget();
+    }
+
+    {
+        let keys_up = keys.clone();
+        let on_keyup = Closure::<dyn FnMut(_)>::new(move |e: KeyboardEvent| {
+            keys_up.borrow_mut().remove(&e.key());
+        });
+        document
+            .add_event_listener_with_callback("keyup", on_keyup.as_ref().unchecked_ref())
+            .unwrap();
+        on_keyup.forget();
+    }
+
+    // ── Load sprites then start loop ──────────────────────────────────────────
+
     let sprites: Rc<RefCell<HashMap<&'static str, HtmlImageElement>>> =
         Rc::new(RefCell::new(HashMap::new()));
     let loaded = Rc::new(RefCell::new(0u32));
@@ -54,15 +90,23 @@ pub fn start() {
         let img = HtmlImageElement::new().expect("failed to create image");
         img.set_src(&format!("assets/{name}.png"));
 
-        let context_c  = context.clone();
-        let state_c    = state.clone();
-        let sprites_c  = sprites.clone();
-        let loaded_c   = loaded.clone();
+        let context_c = context.clone();
+        let state_c   = state.clone();
+        let sprites_c = sprites.clone();
+        let keys_c    = keys.clone();
+        let loaded_c  = loaded.clone();
 
         let onload = Closure::wrap(Box::new(move || {
             *loaded_c.borrow_mut() += 1;
             if *loaded_c.borrow() == TOTAL {
-                draw_scene(&context_c, &state_c, &sprites_c.borrow(), viewport_w, viewport_h);
+                start_loop(
+                    context_c.clone(),
+                    state_c.clone(),
+                    sprites_c.clone(),
+                    keys_c.clone(),
+                    viewport_w,
+                    viewport_h,
+                );
             }
         }) as Box<dyn FnMut()>);
 
@@ -73,6 +117,64 @@ pub fn start() {
     }
 }
 
+// ── Game loop ─────────────────────────────────────────────────────────────────
+
+fn start_loop(
+    context: Rc<CanvasRenderingContext2d>,
+    state: Rc<RefCell<GameState>>,
+    sprites: Rc<RefCell<HashMap<&'static str, HtmlImageElement>>>,
+    keys: Rc<RefCell<HashMap<String, bool>>>,
+    viewport_w: f64,
+    viewport_h: f64,
+) {
+    // Wrap the rAF callback in Rc<RefCell<Option<Closure>>> so it can schedule itself.
+    let raf_cb: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
+    let raf_cb_init = raf_cb.clone();
+
+    let movement = CrispMovement { step_px: SHIP_STEP };
+
+    // Ship is constrained to the alien grid's horizontal extent
+    let grid_left   = (viewport_w - grid_pixel_width()) / 2.0;
+    let ship_left   = grid_left + game::SHIP_HALF_W;
+    let ship_right  = grid_left + grid_pixel_width() - game::SHIP_HALF_W;
+
+    *raf_cb_init.borrow_mut() = Some(Closure::wrap(Box::new(move || {
+        // ── Update ────────────────────────────────────────────────────────────
+        {
+            let mut s = state.borrow_mut();
+            let held = keys.borrow();
+            if held.contains_key("ArrowLeft") {
+                move_ship(&mut s.ship, Direction::Left, &movement, ship_left, ship_right);
+            }
+            if held.contains_key("ArrowRight") {
+                move_ship(&mut s.ship, Direction::Right, &movement, ship_left, ship_right);
+            }
+        }
+
+        // ── Draw ──────────────────────────────────────────────────────────────
+        context.clear_rect(0.0, 0.0, viewport_w, viewport_h);
+        draw_scene(&context, &state.borrow(), &sprites.borrow(), viewport_w, viewport_h);
+
+        // Schedule next frame
+        web_sys::window()
+            .unwrap()
+            .request_animation_frame(
+                raf_cb.borrow().as_ref().unwrap().as_ref().unchecked_ref(),
+            )
+            .unwrap();
+    }) as Box<dyn FnMut()>));
+
+    // Kick off the first frame
+    web_sys::window()
+        .unwrap()
+        .request_animation_frame(
+            raf_cb_init.borrow().as_ref().unwrap().as_ref().unchecked_ref(),
+        )
+        .unwrap();
+}
+
+// ── Scene renderer ────────────────────────────────────────────────────────────
+
 fn draw_scene(
     ctx: &CanvasRenderingContext2d,
     state: &GameState,
@@ -80,7 +182,6 @@ fn draw_scene(
     viewport_w: f64,
     viewport_h: f64,
 ) {
-    // Grid top-left: centred horizontally, starting 15% down from top
     let grid_left = (viewport_w - grid_pixel_width()) / 2.0;
     let grid_top  = viewport_h * 0.15;
 
@@ -95,7 +196,6 @@ fn draw_scene(
         if let Some(img) = sprites.get(sprite_name) {
             let cell_x = grid_left + alien.col as f64 * CELL_W;
             let cell_y = grid_top  + alien.row as f64 * CELL_H;
-            // Centre the sprite inside its cell, drawn 4px smaller for spacing
             let draw_w = img.natural_width()  as f64 - 8.0;
             let draw_h = img.natural_height() as f64 - 8.0;
             let x = cell_x + (CELL_W - draw_w) / 2.0;
@@ -105,7 +205,6 @@ fn draw_scene(
         }
     }
 
-    // Ship — centred horizontally, near bottom
     if let Some(ship_img) = sprites.get("ship") {
         let draw_w = ship_img.natural_width()  as f64;
         let draw_h = ship_img.natural_height() as f64;
@@ -115,6 +214,8 @@ fn draw_scene(
             .expect("failed to draw ship");
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
