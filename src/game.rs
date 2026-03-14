@@ -22,6 +22,11 @@ pub struct Bullet {
     pub y: f64,
 }
 
+pub struct AlienBullet {
+    pub x: f64,
+    pub y: f64,
+}
+
 /// Tracks the alien grid's position and movement direction.
 /// `offset_x` is the signed shift from the grid's centred position;
 /// `offset_y` accumulates the downward drops on wall reversals.
@@ -37,6 +42,7 @@ pub struct GameState {
     pub aliens: Vec<Alien>,
     pub ship: Ship,
     pub bullet: Option<Bullet>,
+    pub alien_bullet: Option<AlienBullet>,
     pub grid: GridMotion,
     pub score: u32,
     pub lives: u32,
@@ -50,6 +56,7 @@ impl GameState {
             aliens: Vec::new(),
             ship: Ship { x: width as f64 / 2.0, y: height as f64 - 40.0 },
             bullet: None,
+            alien_bullet: None,
             grid: GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1 },
             score: 0,
             lives: 3,
@@ -97,6 +104,12 @@ pub const BULLET_STEP: f64 = 8.0;
 /// Half the ship sprite width, used for boundary clamping.
 /// Ship sprite is 55px wide drawn at natural size; half = 27.5.
 pub const SHIP_HALF_W: f64 = 27.5;
+
+/// Half the ship sprite height, used for alien-bullet collision detection — easy to tune.
+pub const SHIP_HALF_H: f64 = 10.0;
+
+/// How many pixels the alien bullet travels downward per frame — easy to tune.
+pub const ALIEN_BULLET_STEP: f64 = 4.0;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Direction {
@@ -500,6 +513,109 @@ mod tests {
         check_bullet_hit(&mut state, 0.0, 0.0);
         let dead: Vec<_> = state.aliens.iter().filter(|a| !a.alive).collect();
         assert_eq!(dead.len(), 1);
+    }
+
+    // ── Alien shooting tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn fire_alien_bullet_spawns_from_lowest_alien_in_col() {
+        // Full grid, grid_left=0 grid_top=0. Bottom row (row 4) in col 0
+        // should be the source of the bullet.
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        fire_alien_bullet(&mut state, 0, 0.0, 0.0);
+        let ab = state.alien_bullet.as_ref().expect("alien bullet should exist");
+        // Expected x: centre of col 0 cell
+        assert_eq!(ab.x, CELL_W / 2.0);
+        // Expected y: bottom of row 4 cell (spawn at bottom edge)
+        assert_eq!(ab.y, 4.0 * CELL_H + CELL_H);
+    }
+
+    #[test]
+    fn fire_alien_bullet_does_nothing_if_already_in_flight() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        fire_alien_bullet(&mut state, 0, 0.0, 0.0);
+        let first_x = state.alien_bullet.as_ref().unwrap().x;
+        fire_alien_bullet(&mut state, 5, 0.0, 0.0); // different col
+        assert_eq!(state.alien_bullet.as_ref().unwrap().x, first_x);
+    }
+
+    #[test]
+    fn fire_alien_bullet_skips_dead_aliens_in_col() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        // Kill bottom two rows in col 3
+        for a in state.aliens.iter_mut() {
+            if a.col == 3 && (a.row == 4 || a.row == 3) {
+                a.alive = false;
+            }
+        }
+        fire_alien_bullet(&mut state, 3, 0.0, 0.0);
+        let ab = state.alien_bullet.as_ref().expect("should fire from row 2");
+        // Row 2 is now the lowest alive in col 3
+        assert_eq!(ab.y, 2.0 * CELL_H + CELL_H);
+    }
+
+    #[test]
+    fn fire_alien_bullet_does_nothing_if_col_empty() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        for a in state.aliens.iter_mut() {
+            if a.col == 2 { a.alive = false; }
+        }
+        fire_alien_bullet(&mut state, 2, 0.0, 0.0);
+        assert!(state.alien_bullet.is_none());
+    }
+
+    #[test]
+    fn step_alien_bullet_moves_downward() {
+        let mut state = GameState::new(800, 600);
+        state.alien_bullet = Some(AlienBullet { x: 100.0, y: 200.0 });
+        step_alien_bullet(&mut state, 600.0);
+        assert_eq!(state.alien_bullet.as_ref().unwrap().y, 200.0 + ALIEN_BULLET_STEP);
+    }
+
+    #[test]
+    fn step_alien_bullet_clears_when_below_canvas() {
+        let mut state = GameState::new(800, 600);
+        state.alien_bullet = Some(AlienBullet { x: 100.0, y: 598.0 });
+        step_alien_bullet(&mut state, 600.0);
+        assert!(state.alien_bullet.is_none());
+    }
+
+    #[test]
+    fn check_alien_hit_ship_decrements_lives_on_overlap() {
+        let mut state = GameState::new(800, 600);
+        // Place alien bullet exactly on ship centre
+        state.alien_bullet = Some(AlienBullet { x: state.ship.x, y: state.ship.y });
+        check_alien_hit_ship(&mut state);
+        assert_eq!(state.lives, 2);
+    }
+
+    #[test]
+    fn check_alien_hit_ship_clears_alien_bullet_on_hit() {
+        let mut state = GameState::new(800, 600);
+        state.alien_bullet = Some(AlienBullet { x: state.ship.x, y: state.ship.y });
+        check_alien_hit_ship(&mut state);
+        assert!(state.alien_bullet.is_none());
+    }
+
+    #[test]
+    fn check_alien_hit_ship_does_nothing_when_bullet_misses() {
+        let mut state = GameState::new(800, 600);
+        // Place bullet far from ship
+        state.alien_bullet = Some(AlienBullet { x: 0.0, y: 0.0 });
+        check_alien_hit_ship(&mut state);
+        assert_eq!(state.lives, 3);
+        assert!(state.alien_bullet.is_some());
+    }
+
+    #[test]
+    fn check_alien_hit_ship_no_bullet_does_nothing() {
+        let mut state = GameState::new(800, 600);
+        check_alien_hit_ship(&mut state);
+        assert_eq!(state.lives, 3);
     }
 }
 
