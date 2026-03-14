@@ -17,11 +17,17 @@ pub struct Ship {
     pub y: f64, // canvas y of ship centre
 }
 
+pub struct Bullet {
+    pub x: f64,
+    pub y: f64,
+}
+
 pub struct GameState {
     pub width: u32,
     pub height: u32,
     pub aliens: Vec<Alien>,
     pub ship: Ship,
+    pub bullet: Option<Bullet>,
 }
 
 impl GameState {
@@ -31,12 +37,16 @@ impl GameState {
             height,
             aliens: Vec::new(),
             ship: Ship { x: width as f64 / 2.0, y: height as f64 - 40.0 },
+            bullet: None,
         }
     }
 }
 
 /// How many pixels the ship moves per step — easy to tune.
 pub const SHIP_STEP: f64 = 4.0;
+
+/// How many pixels the bullet travels upward per frame — easy to tune.
+pub const BULLET_STEP: f64 = 8.0;
 
 /// Half the ship sprite width, used for boundary clamping.
 /// Ship sprite is 55px wide drawn at natural size; half = 27.5.
@@ -70,6 +80,25 @@ pub fn move_ship(ship: &mut Ship, direction: Direction, strategy: &dyn MovementS
     match direction {
         Direction::Left  => ship.x = (ship.x - strategy.step()).max(left_bound),
         Direction::Right => ship.x = (ship.x + strategy.step()).min(right_bound),
+    }
+}
+
+/// Fire a bullet from the ship's current position.
+/// Does nothing if a bullet is already in flight.
+pub fn fire(state: &mut GameState) {
+    if state.bullet.is_none() {
+        state.bullet = Some(Bullet { x: state.ship.x, y: state.ship.y });
+    }
+}
+
+/// Advance the bullet upward by BULLET_STEP.
+/// Clears the bullet if it has moved above `boundary_top`.
+pub fn step_bullet(state: &mut GameState, boundary_top: f64) {
+    if let Some(ref mut b) = state.bullet {
+        b.y -= BULLET_STEP;
+    }
+    if state.bullet.as_ref().map_or(false, |b| b.y < boundary_top) {
+        state.bullet = None;
     }
 }
 
@@ -180,6 +209,60 @@ mod tests {
         let mut ship = Ship { x: r_bound - 1.0, y: 560.0 };
         move_ship(&mut ship, Direction::Right, &crisp(), l_bound, r_bound);
         assert_eq!(ship.x, r_bound);
+    }
+
+    // ── Shooting tests ────────────────────────────────────────────────────────
+
+    #[test]
+    fn fire_spawns_bullet_at_ship_position() {
+        let mut state = GameState::new(800, 600);
+        fire(&mut state);
+        let b = state.bullet.as_ref().expect("bullet should exist after firing");
+        assert_eq!(b.x, state.ship.x);
+        assert_eq!(b.y, state.ship.y);
+    }
+
+    #[test]
+    fn fire_does_nothing_when_bullet_already_in_flight() {
+        let mut state = GameState::new(800, 600);
+        fire(&mut state);
+        let first_y = state.bullet.as_ref().unwrap().y;
+        // Move ship so we can detect if a new bullet was spawned
+        state.ship.x = 100.0;
+        fire(&mut state);
+        // Bullet x should still be the original (not the new ship position)
+        assert_eq!(state.bullet.as_ref().unwrap().x, 400.0);
+        let _ = first_y;
+    }
+
+    #[test]
+    fn step_bullet_moves_upward() {
+        let mut state = GameState::new(800, 600);
+        fire(&mut state);
+        let start_y = state.bullet.as_ref().unwrap().y;
+        step_bullet(&mut state, 0.0); // boundary_top = 0 (won't clear)
+        assert_eq!(state.bullet.as_ref().unwrap().y, start_y - BULLET_STEP);
+    }
+
+    #[test]
+    fn step_bullet_clears_when_above_boundary_top() {
+        let mut state = GameState::new(800, 600);
+        fire(&mut state);
+        // Place bullet just above the boundary top
+        state.bullet.as_mut().unwrap().y = 100.0;
+        step_bullet(&mut state, 110.0); // boundary_top = 110, bullet at 100 → already past
+        assert!(state.bullet.is_none());
+    }
+
+    #[test]
+    fn can_fire_again_after_bullet_clears() {
+        let mut state = GameState::new(800, 600);
+        fire(&mut state);
+        state.bullet.as_mut().unwrap().y = 50.0;
+        step_bullet(&mut state, 100.0); // clears bullet
+        assert!(state.bullet.is_none());
+        fire(&mut state); // should spawn a new bullet
+        assert!(state.bullet.is_some());
     }
 }
 

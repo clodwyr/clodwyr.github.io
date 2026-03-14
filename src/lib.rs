@@ -1,8 +1,8 @@
 pub mod game;
 
 use game::{
-    build_alien_grid, move_ship, AlienKind, CrispMovement, Direction, GameState, LEVEL_1,
-    SHIP_STEP,
+    build_alien_grid, fire, move_ship, step_bullet, AlienKind, CrispMovement, Direction,
+    GameState, LEVEL_1, SHIP_STEP,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -135,6 +135,7 @@ fn start_loop(
 
     // Ship is constrained to the alien grid's horizontal extent
     let grid_left   = (viewport_w - grid_pixel_width()) / 2.0;
+    let grid_top    = viewport_h * 0.15;
     let ship_left   = grid_left + game::SHIP_HALF_W;
     let ship_right  = grid_left + grid_pixel_width() - game::SHIP_HALF_W;
 
@@ -149,6 +150,10 @@ fn start_loop(
             if held.contains_key("ArrowRight") {
                 move_ship(&mut s.ship, Direction::Right, &movement, ship_left, ship_right);
             }
+            if held.contains_key(" ") {
+                fire(&mut s);
+            }
+            step_bullet(&mut s, grid_top);
         }
 
         // ── Draw ──────────────────────────────────────────────────────────────
@@ -212,6 +217,12 @@ fn draw_scene(
         let y = state.ship.y - draw_h / 2.0;
         ctx.draw_image_with_html_image_element_and_dw_and_dh(ship_img, x, y, draw_w, draw_h)
             .expect("failed to draw ship");
+    }
+
+    // Bullet — 3×12px green rect
+    if let Some(ref b) = state.bullet {
+        ctx.set_fill_style_str("#68fb35");
+        ctx.fill_rect(b.x - 1.5, b.y - 12.0, 3.0, 12.0);
     }
 }
 
