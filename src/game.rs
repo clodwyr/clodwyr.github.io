@@ -31,11 +31,13 @@ pub struct AlienBullet {
 /// `offset_x` is the signed shift from the grid's centred position;
 /// `offset_y` accumulates the downward drops on wall reversals.
 /// `tick` counts every frame so `step_grid` can gate movement to every N frames.
+/// `anim_frame` toggles on every actual move — renderers use it to alternate sprite frames.
 pub struct GridMotion {
     pub offset_x: f64,
     pub offset_y: f64,
     pub direction: i8,  // +1 = right, -1 = left
     pub tick: u32,
+    pub anim_frame: bool,
 }
 
 pub struct GameState {
@@ -61,7 +63,7 @@ impl GameState {
             ship: Ship { x: width as f64 / 2.0, y: height as f64 - 40.0 },
             bullet: None,
             alien_bullet: None,
-            grid: GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0 },
+            grid: GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0, anim_frame: false },
             score: 0,
             lives: 3,
             level: 0,
@@ -508,6 +510,38 @@ mod tests {
     }
 
     #[test]
+    fn step_grid_toggles_anim_frame_on_move() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        prime_tick(&mut state);
+        assert!(!state.grid.anim_frame);
+        step_grid(&mut state, &classic_55(), 100.0);
+        assert!(state.grid.anim_frame);
+    }
+
+    #[test]
+    fn step_grid_does_not_toggle_anim_frame_when_gated() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        // tick=0 → first call won't fire a move
+        step_grid(&mut state, &classic_55(), 100.0);
+        assert!(!state.grid.anim_frame);
+    }
+
+    #[test]
+    fn step_grid_anim_frame_alternates_each_move() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        prime_tick(&mut state);
+        step_grid(&mut state, &classic_55(), 100.0); // frame → true
+        assert!(state.grid.anim_frame);
+        // prime for a second move
+        state.grid.tick = GRID_TICK_MAX - 1;
+        step_grid(&mut state, &classic_55(), 100.0); // frame → false
+        assert!(!state.grid.anim_frame);
+    }
+
+    #[test]
     fn classic_speed_step_px_is_fixed() {
         let s = ClassicSpeed { total_aliens: 55 };
         assert_eq!(s.step_px(55), GRID_STEP_PX);
@@ -835,7 +869,7 @@ pub fn all_aliens_dead(state: &GameState) -> bool {
 pub fn advance_level(state: &mut GameState) {
     state.level = (state.level + 1) % LEVELS.len();
     state.aliens = build_alien_grid(LEVELS[state.level]);
-    state.grid = GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0 };
+    state.grid = GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0, anim_frame: false };
     state.bullet = None;
     state.alien_bullet = None;
 }
