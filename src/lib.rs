@@ -169,6 +169,10 @@ fn start_loop(
                     *fc += 1;
                     *fc
                 };
+                // Check hit against current bullet position BEFORE stepping,
+                // so the bullet can't be cleared past the floor before the
+                // collision is tested.
+                check_alien_hit_ship(&mut s);
                 // Bullet clears when it passes below the ship, not the canvas bottom
                 let bullet_floor = s.ship.y + SHIP_HALF_H;
                 if f % ALIEN_FIRE_INTERVAL == 0 {
@@ -178,7 +182,6 @@ fn start_loop(
                 } else {
                     step_alien_bullet(&mut s, bullet_floor);
                 }
-                check_alien_hit_ship(&mut s);
                 check_invasion(&mut s, grid_top);
 
                 // Level clear — advance when all aliens are dead
@@ -270,6 +273,47 @@ fn draw_scene(
         ctx.set_text_align("center");
         ctx.fill_text("GAME OVER", viewport_w / 2.0, viewport_h / 2.0)
             .expect("fill_text failed");
+    }
+
+    draw_hud(ctx, state, sprites, viewport_w);
+}
+
+// ── HUD ───────────────────────────────────────────────────────────────────────
+
+const HUD_MARGIN: f64 = 24.0;
+const HUD_BASELINE: f64 = 36.0; // y baseline for text / icons
+
+fn draw_hud(
+    ctx: &CanvasRenderingContext2d,
+    state: &GameState,
+    sprites: &HashMap<&'static str, HtmlImageElement>,
+    viewport_w: f64,
+) {
+    ctx.set_fill_style_str("#68fb35");
+    ctx.set_font("bold 24px monospace");
+
+    // Score — left-aligned
+    ctx.set_text_align("left");
+    ctx.fill_text(&format!("SCORE  {:>6}", state.score), HUD_MARGIN, HUD_BASELINE)
+        .expect("fill_text failed");
+
+    // Level — centred
+    ctx.set_text_align("center");
+    ctx.fill_text(&format!("LEVEL  {}", state.level + 1), viewport_w / 2.0, HUD_BASELINE)
+        .expect("fill_text failed");
+
+    // Lives — ship icons, right-aligned
+    if let Some(ship_img) = sprites.get("ship") {
+        // Draw ship icons from right edge inward; scale to ~half sprite size
+        let icon_w = ship_img.natural_width()  as f64 * 0.6;
+        let icon_h = ship_img.natural_height() as f64 * 0.6;
+        let gap    = icon_w + 8.0;
+        for i in 0..state.lives {
+            let x = viewport_w - HUD_MARGIN - icon_w - i as f64 * gap;
+            let y = HUD_BASELINE - icon_h;
+            ctx.draw_image_with_html_image_element_and_dw_and_dh(ship_img, x, y, icon_w, icon_h)
+                .expect("failed to draw life icon");
+        }
     }
 }
 
