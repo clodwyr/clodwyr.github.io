@@ -28,7 +28,7 @@ pub fn start() {
         .expect("failed to get 2d context");
 
     let image = HtmlImageElement::new().expect("failed to create image element");
-    image.set_src("space-invaders.jpg");
+    image.set_src("assets/crab.png");
 
     let context = std::rc::Rc::new(context);
     let image = std::rc::Rc::new(image);
@@ -37,25 +37,24 @@ pub fn start() {
     let image_clone = image.clone();
 
     let onload = Closure::wrap(Box::new(move || {
-        let (draw_w, draw_h) = game::quarter_size(
-            image_clone.natural_width() as f64,
-            image_clone.natural_height() as f64,
+        let draw_w = image_clone.natural_width() as f64;
+        let draw_h = image_clone.natural_height() as f64;
+        let (x, y) = game::centered_position(
+            viewport_w,
+            viewport_h,
+            draw_w,
+            draw_h,
         );
         context_clone
             .draw_image_with_html_image_element_and_dw_and_dh(
                 &image_clone,
-                0.0,
-                0.0,
+                x,
+                y,
                 draw_w,
                 draw_h,
             )
             .expect("failed to draw image");
 
-        context_clone.set_font("bold 20px monospace");
-        context_clone.set_fill_style(&JsValue::from_str("white"));
-        context_clone
-            .fill_text("clodwyr", 16.0, 36.0)
-            .expect("failed to draw text");
     }) as Box<dyn FnMut()>);
 
     image.set_onload(Some(onload.as_ref().unchecked_ref()));
@@ -64,7 +63,7 @@ pub fn start() {
 
 #[cfg(test)]
 mod tests {
-    use super::game::{quarter_size, GameState};
+    use super::game::{centered_position, quarter_size, GameState};
 
     #[test]
     fn game_state_initialises_with_correct_dimensions() {
@@ -78,5 +77,12 @@ mod tests {
         let (w, h) = quarter_size(800.0, 600.0);
         assert_eq!(w, 200.0);
         assert_eq!(h, 150.0);
+    }
+
+    #[test]
+    fn centered_position_places_image_in_middle_of_canvas() {
+        let (x, y) = centered_position(800.0, 600.0, 200.0, 150.0);
+        assert_eq!(x, 300.0);
+        assert_eq!(y, 225.0);
     }
 }

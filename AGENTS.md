@@ -14,7 +14,8 @@ Never skip the red phase. Never write implementation before a test.
 
 - All work happens on a **feature branch** (never commit directly to `main`).
 - Commit at each TDD phase: red commit, green commit, refactor commit.
-- When a feature is complete, **squash merge** the branch into `main` to keep history clean.
+- When a feature is complete, **confirm with the user before merging** — they want to run visual checks first.
+- Then **squash merge** the branch into `main` to keep history clean.
 - One branch per feature/milestone.
 
 ## Project

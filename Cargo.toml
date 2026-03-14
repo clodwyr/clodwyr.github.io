@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 wasm-bindgen = "0.2"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dependencies.web-sys]
 version = "0.3"
@@ -22,6 +23,10 @@ features = [
   "EventTarget",
   "Event",
 ]
+
+[[bin]]
+name = "gen-sprites"
+path = "src/bin/gen_sprites.rs"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"

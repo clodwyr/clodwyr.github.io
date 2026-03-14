@@ -10,20 +10,23 @@
       margin: 0;
       overflow: hidden;
       background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 100vw;
+      height: 100vh;
     }
     canvas {
       display: block;
-      width: 100vw;
-      height: 100vh;
     }
   </style>
 </head>
 <body>
   <canvas id="canvas">
     <!-- Static fallback for browsers without Canvas/WebAssembly support -->
-    <img src="space-invaders.jpg" alt="Space Invaders" width="800" />
+    <img src="assets/crab_white.png" alt="Space Invaders" width="800" />
   </canvas>
-  <link data-trunk rel="rust" data-wasm-opt="z" />
-  <link data-trunk rel="copy-file" href="space-invaders.jpg" />
+  <link data-trunk rel="rust" data-wasm-opt="z" data-target-name="space_invaders" />
+  <link data-trunk rel="copy-dir" href="assets" />
 </body>
 </html>
