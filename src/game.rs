@@ -42,6 +42,7 @@ pub struct GridMotion {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum GamePhase {
+    Attract,
     Playing,
     LevelClear,
     GameOver,
@@ -62,6 +63,8 @@ pub struct GameState {
     pub phase: GamePhase,
     /// Counts frames spent in the LevelClear phase before advancing.
     pub pause_timer: u32,
+    /// Counts frames spent in the GameOver phase — prompt is shown after GAME_OVER_PAUSE.
+    pub game_over_timer: u32,
 }
 
 impl GameState {
@@ -77,8 +80,9 @@ impl GameState {
             score: 0,
             lives: 3,
             level: 0,
-            phase: GamePhase::Playing,
+            phase: GamePhase::Attract,
             pause_timer: 0,
+            game_over_timer: 0,
         }
     }
 }
@@ -307,6 +311,32 @@ pub fn check_invasion(state: &mut GameState, grid_top: f64) {
     if grid_bottom >= state.ship.y {
         state.phase = GamePhase::GameOver;
     }
+}
+
+/// Frames the "GAME OVER" message is shown before the restart prompt appears — easy to tune.
+pub const GAME_OVER_PAUSE: u32 = 120; // ~2 s at 60 fps
+
+/// Advance the game-over timer while in the GameOver phase. Saturates at u32::MAX.
+/// Does nothing in any other phase.
+pub fn tick_game_over(state: &mut GameState) {
+    if state.phase == GamePhase::GameOver {
+        state.game_over_timer = state.game_over_timer.saturating_add(1);
+    }
+}
+
+/// Reset to a fresh game from any phase — used by both Attract→Playing and GameOver→Playing.
+pub fn reset_game(state: &mut GameState) {
+    state.lives = 3;
+    state.score = 0;
+    state.level = 0;
+    state.aliens = build_alien_grid(LEVELS[0]);
+    state.grid = GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0, anim_frame: false };
+    state.bullet = None;
+    state.alien_bullet = None;
+    state.pause_timer = 0;
+    state.game_over_timer = 0;
+    state.ship.x = state.width as f64 / 2.0;
+    state.phase = GamePhase::Playing;
 }
 
 /// Frames the "LEVEL CLEAR" screen is shown before loading the next level — easy to tune.
@@ -804,6 +834,7 @@ mod tests {
     #[test]
     fn check_alien_hit_ship_stays_playing_while_lives_remain() {
         let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
         state.lives = 2;
         state.alien_bullet = Some(AlienBullet { x: state.ship.x, y: state.ship.y });
         check_alien_hit_ship(&mut state);
@@ -813,8 +844,8 @@ mod tests {
     // ── Game over / invasion tests ────────────────────────────────────────────
 
     #[test]
-    fn phase_starts_as_playing() {
-        assert_eq!(GameState::new(800, 600).phase, GamePhase::Playing);
+    fn phase_starts_as_attract() {
+        assert_eq!(GameState::new(800, 600).phase, GamePhase::Attract);
     }
 
     #[test]
@@ -833,15 +864,14 @@ mod tests {
         state.aliens = build_alien_grid(LEVEL_1);
         state.grid.offset_y = 0.0;
         check_invasion(&mut state, 0.0);
-        assert_eq!(state.phase, GamePhase::Playing);
+        assert_ne!(state.phase, GamePhase::GameOver);
     }
 
     #[test]
     fn check_invasion_does_nothing_when_no_aliens() {
         let mut state = GameState::new(800, 600);
-        // no aliens — grid is empty, should not trigger game over
         check_invasion(&mut state, 0.0);
-        assert_eq!(state.phase, GamePhase::Playing);
+        assert_ne!(state.phase, GamePhase::GameOver);
     }
 
     // ── Level tests ───────────────────────────────────────────────────────────
@@ -934,6 +964,7 @@ mod tests {
     #[test]
     fn check_level_clear_transitions_when_all_aliens_dead() {
         let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
         state.aliens = build_alien_grid(LEVEL_1);
         for a in &mut state.aliens { a.alive = false; }
         check_level_clear(&mut state);
@@ -943,6 +974,7 @@ mod tests {
     #[test]
     fn check_level_clear_resets_pause_timer() {
         let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
         state.aliens = build_alien_grid(LEVEL_1);
         for a in &mut state.aliens { a.alive = false; }
         state.pause_timer = 99;
@@ -953,6 +985,7 @@ mod tests {
     #[test]
     fn check_level_clear_does_nothing_while_aliens_remain() {
         let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
         state.aliens = build_alien_grid(LEVEL_1);
         check_level_clear(&mut state);
         assert_eq!(state.phase, GamePhase::Playing);
@@ -972,7 +1005,7 @@ mod tests {
         state.aliens = build_alien_grid(LEVEL_1);
         tick_level_clear(&mut state);
         assert_eq!(state.pause_timer, 0);
-        assert_eq!(state.phase, GamePhase::Playing);
+        assert_ne!(state.phase, GamePhase::LevelClear);
     }
 
     #[test]
@@ -998,6 +1031,104 @@ mod tests {
         assert_eq!(state.phase, GamePhase::LevelClear);
         // Grid should still be empty — advance_level not yet called
         assert!(!state.aliens.iter().any(|a| a.alive));
+    }
+
+    // ── reset_game tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn reset_game_sets_phase_to_playing() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::GameOver;
+        reset_game(&mut state);
+        assert_eq!(state.phase, GamePhase::Playing);
+    }
+
+    #[test]
+    fn reset_game_restores_lives() {
+        let mut state = GameState::new(800, 600);
+        state.lives = 0;
+        reset_game(&mut state);
+        assert_eq!(state.lives, 3);
+    }
+
+    #[test]
+    fn reset_game_clears_score() {
+        let mut state = GameState::new(800, 600);
+        state.score = 500;
+        reset_game(&mut state);
+        assert_eq!(state.score, 0);
+    }
+
+    #[test]
+    fn reset_game_resets_to_level_zero() {
+        let mut state = GameState::new(800, 600);
+        state.level = 2;
+        reset_game(&mut state);
+        assert_eq!(state.level, 0);
+    }
+
+    #[test]
+    fn reset_game_loads_fresh_alien_grid() {
+        let mut state = GameState::new(800, 600);
+        reset_game(&mut state);
+        assert_eq!(state.aliens.iter().filter(|a| a.alive).count(), 55);
+    }
+
+    #[test]
+    fn reset_game_clears_bullets() {
+        let mut state = GameState::new(800, 600);
+        state.bullet = Some(Bullet { x: 100.0, y: 100.0 });
+        state.alien_bullet = Some(AlienBullet { x: 200.0, y: 200.0 });
+        reset_game(&mut state);
+        assert!(state.bullet.is_none());
+        assert!(state.alien_bullet.is_none());
+    }
+
+    #[test]
+    fn reset_game_resets_ship_to_centre() {
+        let mut state = GameState::new(800, 600);
+        state.ship.x = 100.0;
+        reset_game(&mut state);
+        assert_eq!(state.ship.x, 400.0);
+    }
+
+    #[test]
+    fn reset_game_resets_game_over_timer() {
+        let mut state = GameState::new(800, 600);
+        state.game_over_timer = 99;
+        reset_game(&mut state);
+        assert_eq!(state.game_over_timer, 0);
+    }
+
+    // ── Game-over timer tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn game_over_timer_starts_at_zero() {
+        assert_eq!(GameState::new(800, 600).game_over_timer, 0);
+    }
+
+    #[test]
+    fn tick_game_over_increments_timer_during_game_over() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::GameOver;
+        tick_game_over(&mut state);
+        assert_eq!(state.game_over_timer, 1);
+    }
+
+    #[test]
+    fn tick_game_over_does_nothing_outside_game_over() {
+        let mut state = GameState::new(800, 600);
+        tick_game_over(&mut state);
+        assert_eq!(state.game_over_timer, 0);
+    }
+
+    #[test]
+    fn tick_game_over_does_not_overflow() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::GameOver;
+        state.game_over_timer = u32::MAX;
+        tick_game_over(&mut state); // should saturate, not panic
+        assert_eq!(state.game_over_timer, u32::MAX);
     }
 }
 
