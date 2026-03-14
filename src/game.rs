@@ -46,6 +46,8 @@ pub struct GameState {
     pub grid: GridMotion,
     pub score: u32,
     pub lives: u32,
+    /// Zero-based index into LEVELS — increments each time the level is cleared.
+    pub level: usize,
 }
 
 impl GameState {
@@ -60,6 +62,7 @@ impl GameState {
             grid: GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1 },
             score: 0,
             lives: 3,
+            level: 0,
         }
     }
 }
@@ -660,6 +663,91 @@ mod tests {
         let mut state = GameState::new(800, 600);
         check_alien_hit_ship(&mut state);
         assert_eq!(state.lives, 3);
+    }
+
+    // ── Level tests ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn level_starts_at_zero() {
+        assert_eq!(GameState::new(800, 600).level, 0);
+    }
+
+    #[test]
+    fn all_aliens_dead_true_when_all_dead() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        for a in &mut state.aliens { a.alive = false; }
+        assert!(all_aliens_dead(&state));
+    }
+
+    #[test]
+    fn all_aliens_dead_false_when_any_alive() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        assert!(!all_aliens_dead(&state));
+    }
+
+    #[test]
+    fn all_aliens_dead_true_when_grid_empty() {
+        let state = GameState::new(800, 600);
+        assert!(all_aliens_dead(&state));
+    }
+
+    #[test]
+    fn advance_level_increments_level_index() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        advance_level(&mut state);
+        assert_eq!(state.level, 1);
+    }
+
+    #[test]
+    fn advance_level_loads_new_alien_grid() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        for a in &mut state.aliens { a.alive = false; }
+        advance_level(&mut state);
+        assert!(state.aliens.iter().any(|a| a.alive));
+    }
+
+    #[test]
+    fn advance_level_resets_grid_motion() {
+        let mut state = GameState::new(800, 600);
+        state.grid.offset_x = 40.0;
+        state.grid.offset_y = 96.0;
+        state.grid.direction = -1;
+        advance_level(&mut state);
+        assert_eq!(state.grid.offset_x, 0.0);
+        assert_eq!(state.grid.offset_y, 0.0);
+        assert_eq!(state.grid.direction, 1);
+    }
+
+    #[test]
+    fn advance_level_clears_bullets() {
+        let mut state = GameState::new(800, 600);
+        state.bullet = Some(Bullet { x: 100.0, y: 100.0 });
+        state.alien_bullet = Some(AlienBullet { x: 200.0, y: 200.0 });
+        advance_level(&mut state);
+        assert!(state.bullet.is_none());
+        assert!(state.alien_bullet.is_none());
+    }
+
+    #[test]
+    fn advance_level_wraps_to_level_zero_after_last() {
+        let mut state = GameState::new(800, 600);
+        state.level = LEVELS.len() - 1;
+        advance_level(&mut state);
+        assert_eq!(state.level, 0);
+    }
+
+    #[test]
+    fn levels_has_at_least_two_entries() {
+        assert!(LEVELS.len() >= 2);
+    }
+
+    #[test]
+    fn level_2_pattern_has_five_rows() {
+        assert_eq!(LEVEL_2.len(), 5);
     }
 }
 
