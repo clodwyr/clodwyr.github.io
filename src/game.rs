@@ -30,10 +30,12 @@ pub struct AlienBullet {
 /// Tracks the alien grid's position and movement direction.
 /// `offset_x` is the signed shift from the grid's centred position;
 /// `offset_y` accumulates the downward drops on wall reversals.
+/// `tick` counts every frame so `step_grid` can gate movement to every N frames.
 pub struct GridMotion {
     pub offset_x: f64,
     pub offset_y: f64,
     pub direction: i8,  // +1 = right, -1 = left
+    pub tick: u32,
 }
 
 pub struct GameState {
@@ -59,7 +61,7 @@ impl GameState {
             ship: Ship { x: width as f64 / 2.0, y: height as f64 - 40.0 },
             bullet: None,
             alien_bullet: None,
-            grid: GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1 },
+            grid: GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0 },
             score: 0,
             lives: 3,
             level: 0,
@@ -81,14 +83,19 @@ pub const PLAY_MARGIN: f64 = 48.0;
 
 // ── Grid movement constants ───────────────────────────────────────────────────
 
-/// Grid speed with a full formation — easy to tune.
-pub const GRID_BASE_STEP: f64 = 1.0;
-/// Grid speed when only one alien remains — easy to tune.
-pub const GRID_MAX_STEP:  f64 = 6.0;
+/// Pixels the grid jumps per move — larger = more visible, classic feel. Easy to tune.
+pub const GRID_STEP_PX: f64 = 4.0;
+/// Frames between grid moves at a full formation (slowest) — easy to tune.
+pub const GRID_TICK_MAX: u32 = 30;
+/// Frames between grid moves when only one alien remains (fastest) — easy to tune.
+pub const GRID_TICK_MIN: u32 = 4;
 
 /// Pluggable speed strategy — swap for different difficulty curves.
 pub trait SpeedStrategy {
+    /// Pixels to move per step.
     fn step_px(&self, alive_count: usize) -> f64;
+    /// Frames between steps; lower = faster.
+    fn tick_interval(&self, alive_count: usize) -> u32;
 }
 
 /// Classic Space Invaders speed: linearly faster as aliens are killed.
@@ -430,20 +437,36 @@ mod tests {
 
     fn classic_55() -> ClassicSpeed { ClassicSpeed { total_aliens: 55 } }
 
+    // Helper: set tick so the very next step_grid call triggers a move (with 55 alive).
+    fn prime_tick(state: &mut GameState) {
+        state.grid.tick = GRID_TICK_MAX - 1;
+    }
+
+    #[test]
+    fn step_grid_does_not_move_before_interval() {
+        // Default tick = 0; first call increments to 1, which is not a multiple of GRID_TICK_MAX.
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        step_grid(&mut state, &classic_55(), 100.0);
+        assert_eq!(state.grid.offset_x, 0.0);
+    }
+
     #[test]
     fn step_grid_moves_right_by_step() {
         let mut state = GameState::new(800, 600);
         state.aliens = build_alien_grid(LEVEL_1);
+        prime_tick(&mut state);
         step_grid(&mut state, &classic_55(), 100.0);
-        assert_eq!(state.grid.offset_x, GRID_BASE_STEP);
+        assert_eq!(state.grid.offset_x, GRID_STEP_PX);
         assert_eq!(state.grid.offset_y, 0.0);
     }
 
     #[test]
     fn step_grid_reverses_and_drops_at_right_wall() {
         let mut state = GameState::new(800, 600);
-        state.grid.offset_x = 99.0; // one step would exceed max_offset=100
+        state.grid.offset_x = 99.0;
         state.aliens = build_alien_grid(LEVEL_1);
+        prime_tick(&mut state);
         step_grid(&mut state, &classic_55(), 100.0);
         assert_eq!(state.grid.direction, -1);
         assert_eq!(state.grid.offset_y, CELL_H);
@@ -456,6 +479,7 @@ mod tests {
         state.grid.offset_x = -99.0;
         state.grid.direction = -1;
         state.aliens = build_alien_grid(LEVEL_1);
+        prime_tick(&mut state);
         step_grid(&mut state, &classic_55(), 100.0);
         assert_eq!(state.grid.direction, 1);
         assert_eq!(state.grid.offset_y, CELL_H);
@@ -466,7 +490,6 @@ mod tests {
     fn step_grid_noop_when_no_alive_aliens() {
         let mut state = GameState::new(800, 600);
         step_grid(&mut state, &classic_55(), 100.0);
-        // Empty aliens vec — should not crash and grid stays put
         let mut state2 = GameState::new(800, 600);
         state2.aliens = build_alien_grid(LEVEL_1);
         for a in &mut state2.aliens { a.alive = false; }
@@ -476,22 +499,29 @@ mod tests {
     }
 
     #[test]
-    fn classic_speed_at_full_count_returns_base() {
+    fn classic_speed_step_px_is_fixed() {
         let s = ClassicSpeed { total_aliens: 55 };
-        assert_eq!(s.step_px(55), GRID_BASE_STEP);
+        assert_eq!(s.step_px(55), GRID_STEP_PX);
+        assert_eq!(s.step_px(1),  GRID_STEP_PX);
     }
 
     #[test]
-    fn classic_speed_at_one_alien_returns_max() {
+    fn classic_speed_tick_interval_at_full_grid_is_max() {
         let s = ClassicSpeed { total_aliens: 55 };
-        assert_eq!(s.step_px(1), GRID_BASE_STEP + (54.0 / 55.0) * (GRID_MAX_STEP - GRID_BASE_STEP));
+        assert_eq!(s.tick_interval(55), GRID_TICK_MAX);
     }
 
     #[test]
-    fn classic_speed_increases_as_aliens_die() {
+    fn classic_speed_tick_interval_at_one_alien_is_min() {
         let s = ClassicSpeed { total_aliens: 55 };
-        assert!(s.step_px(30) > s.step_px(55));
-        assert!(s.step_px(1)  > s.step_px(30));
+        assert_eq!(s.tick_interval(1), GRID_TICK_MIN);
+    }
+
+    #[test]
+    fn classic_speed_tick_interval_decreases_as_aliens_die() {
+        let s = ClassicSpeed { total_aliens: 55 };
+        assert!(s.tick_interval(30) < s.tick_interval(55));
+        assert!(s.tick_interval(1)  < s.tick_interval(30));
     }
 
     // ── Collision tests ───────────────────────────────────────────────────────
@@ -796,7 +826,7 @@ pub fn all_aliens_dead(state: &GameState) -> bool {
 pub fn advance_level(state: &mut GameState) {
     state.level = (state.level + 1) % LEVELS.len();
     state.aliens = build_alien_grid(LEVELS[state.level]);
-    state.grid = GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1 };
+    state.grid = GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0 };
     state.bullet = None;
     state.alien_bullet = None;
 }
