@@ -3,6 +3,8 @@ pub struct Alien {
     pub row: u32,  // row index in grid (0-based)
     pub alive: bool,
     pub sprite: AlienKind,
+    /// Counts down each frame while the explosion is displayed. Zero = no explosion.
+    pub explosion_timer: u8,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -107,6 +109,8 @@ pub const GRID_STEP_PX: f64 = 4.0;
 pub const GRID_TICK_MAX: u32 = 30;
 /// Frames between grid moves when only one alien remains (fastest) — easy to tune.
 pub const GRID_TICK_MIN: u32 = 4;
+/// How many frames an explosion sprite is shown after an alien is shot.
+pub const EXPLOSION_FRAMES: u8 = 20;
 
 /// Pluggable speed strategy — swap for different difficulty curves.
 pub trait SpeedStrategy {
@@ -236,10 +240,19 @@ pub fn check_bullet_hit(state: &mut GameState, grid_left: f64, grid_top: f64) {
 
         if bx >= left && bx < right && by >= top && by < bottom {
             alien.alive = false;
+            alien.explosion_timer = EXPLOSION_FRAMES;
             state.bullet = None;
             state.score += 1;
             return;
         }
+    }
+}
+
+/// Tick down explosion timers on dead aliens.
+/// Only decrements when the alien is dead (`!alive`) and has a non-zero timer.
+pub fn tick_explosions(state: &mut GameState) {
+    for alien in state.aliens.iter_mut().filter(|a| !a.alive && a.explosion_timer > 0) {
+        alien.explosion_timer -= 1;
     }
 }
 
@@ -301,14 +314,17 @@ pub fn check_alien_hit_ship(state: &mut GameState) {
     }
 }
 
-/// Check whether the alien grid has descended to the ship's level (invasion).
+/// Check whether the lowest surviving alien has descended to the ship's level (invasion).
 /// `grid_top` is the canvas y of the grid's top-left corner at offset_y = 0.
-/// If any alive alien's bottom edge reaches or passes the ship, sets phase to GameOver.
+/// Finds the highest row index among alive aliens and checks only that row's bottom edge.
 /// Does nothing if no aliens are alive.
 pub fn check_invasion(state: &mut GameState, grid_top: f64) {
-    if !state.aliens.iter().any(|a| a.alive) { return; }
-    let grid_bottom = grid_top + state.grid.offset_y + GRID_H;
-    if grid_bottom >= state.ship.y {
+    let max_row = match state.aliens.iter().filter(|a| a.alive).map(|a| a.row).max() {
+        Some(r) => r,
+        None => return,
+    };
+    let lowest_bottom = grid_top + state.grid.offset_y + (max_row + 1) as f64 * CELL_H;
+    if lowest_bottom >= state.ship.y {
         state.phase = GamePhase::GameOver;
     }
 }
@@ -874,6 +890,36 @@ mod tests {
         assert_ne!(state.phase, GamePhase::GameOver);
     }
 
+    #[test]
+    fn check_invasion_does_not_trigger_when_only_top_row_alive_and_grid_not_descended() {
+        // Bug: if only row 0 (top row) is alive but offset_y = ship.y - GRID_H,
+        // the old code (which uses GRID_H) triggers game over even though row 0's
+        // bottom edge is still far above the ship.
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        // Kill all aliens except row 0
+        for a in &mut state.aliens { if a.row != 0 { a.alive = false; } }
+        // offset_y positions the full grid so its BOTTOM would be at ship.y
+        // — but only row 0 is alive, so the lowest surviving alien is at y=CELL_H, not GRID_H.
+        state.grid.offset_y = state.ship.y - GRID_H;
+        state.phase = GamePhase::Playing;
+        check_invasion(&mut state, 0.0);
+        assert_ne!(state.phase, GamePhase::GameOver);
+    }
+
+    #[test]
+    fn check_invasion_triggers_when_lowest_alive_row_reaches_ship() {
+        // Only row 0 alive; position it so row 0's bottom just touches ship.y.
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        for a in &mut state.aliens { if a.row != 0 { a.alive = false; } }
+        // Row 0 bottom = grid_top + offset_y + CELL_H.  Set offset_y so this = ship.y.
+        state.grid.offset_y = state.ship.y - CELL_H; // grid_top = 0.0 in test
+        state.phase = GamePhase::Playing;
+        check_invasion(&mut state, 0.0);
+        assert_eq!(state.phase, GamePhase::GameOver);
+    }
+
     // ── Level tests ───────────────────────────────────────────────────────────
 
     #[test]
@@ -1130,6 +1176,53 @@ mod tests {
         tick_game_over(&mut state); // should saturate, not panic
         assert_eq!(state.game_over_timer, u32::MAX);
     }
+
+    // ── Explosion animation tests ─────────────────────────────────────────────
+
+    #[test]
+    fn bullet_hit_starts_explosion_timer() {
+        let mut state = state_with_bullet_at_alien(0, 0);
+        check_bullet_hit(&mut state, 0.0, 0.0);
+        let hit = state.aliens.iter().find(|a| a.col == 0 && a.row == 0).unwrap();
+        assert!(hit.explosion_timer > 0);
+    }
+
+    #[test]
+    fn alien_starts_with_no_explosion() {
+        let state = GameState::new(800, 600);
+        let aliens = build_alien_grid(LEVEL_1);
+        assert!(aliens.iter().all(|a| a.explosion_timer == 0));
+    }
+
+    #[test]
+    fn tick_explosions_decrements_timer() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        state.aliens[0].alive = false;
+        state.aliens[0].explosion_timer = 10;
+        tick_explosions(&mut state);
+        assert_eq!(state.aliens[0].explosion_timer, 9);
+    }
+
+    #[test]
+    fn tick_explosions_does_not_decrement_alive_aliens() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        state.aliens[0].explosion_timer = 10; // alive alien — timer should not change
+        tick_explosions(&mut state);
+        assert_eq!(state.aliens[0].explosion_timer, 10);
+    }
+
+    #[test]
+    fn all_aliens_dead_ignores_exploding_aliens() {
+        // An alien with explosion_timer > 0 is dead but still "visible" — should
+        // not count as alive for level-clear purposes.
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        for a in &mut state.aliens { a.alive = false; }
+        state.aliens[0].explosion_timer = 5;
+        assert!(all_aliens_dead(&state));
+    }
 }
 
 /// Level grid pattern: 5 rows × 11 columns.
@@ -1197,6 +1290,7 @@ pub fn build_alien_grid(pattern: LevelPattern) -> Vec<Alien> {
                 row: row as u32,
                 alive: true,
                 sprite,
+                explosion_timer: 0,
             });
         }
     }
