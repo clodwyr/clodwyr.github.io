@@ -1,10 +1,11 @@
 pub mod game;
 
 use game::{
-    advance_level, all_aliens_dead, build_alien_grid, check_alien_hit_ship, check_bullet_hit,
-    check_invasion, fire, fire_alien_bullet, move_ship, step_alien_bullet, step_bullet,
-    step_grid, AlienKind, ClassicSpeed, CrispMovement, Direction, GamePhase, GameState,
-    CELL_H, CELL_W, GRID_COLS, GRID_W, LEVEL_1, PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
+    build_alien_grid, check_alien_hit_ship, check_bullet_hit, check_invasion,
+    check_level_clear, fire, fire_alien_bullet, move_ship, step_alien_bullet, step_bullet,
+    step_grid, tick_level_clear, AlienKind, ClassicSpeed, CrispMovement, Direction,
+    GamePhase, GameState, CELL_H, CELL_W, GRID_COLS, GRID_W, LEVEL_1, PLAY_MARGIN,
+    SHIP_HALF_H, SHIP_STEP,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -183,12 +184,10 @@ fn start_loop(
                     step_alien_bullet(&mut s, bullet_floor);
                 }
                 check_invasion(&mut s, grid_top);
-
-                // Level clear — advance when all aliens are dead
-                if all_aliens_dead(&s) {
-                    advance_level(&mut s);
-                }
+                check_level_clear(&mut s);
             }
+            // tick_level_clear runs outside the Playing guard — it owns the LevelClear phase
+            tick_level_clear(&mut s);
         }
 
         // ── Draw ──────────────────────────────────────────────────────────────
@@ -262,6 +261,17 @@ fn draw_scene(
     if let Some(ref ab) = state.alien_bullet {
         ctx.set_fill_style_str("#ff4444");
         ctx.fill_rect(ab.x - 1.5, ab.y, 3.0, 12.0);
+    }
+
+    // Level clear overlay
+    if state.phase == GamePhase::LevelClear {
+        ctx.set_fill_style_str("rgba(0,0,0,0.45)");
+        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.set_fill_style_str("#68fb35");
+        ctx.set_font("bold 64px monospace");
+        ctx.set_text_align("center");
+        ctx.fill_text("LEVEL CLEAR", viewport_w / 2.0, viewport_h / 2.0)
+            .expect("fill_text failed");
     }
 
     // Game over overlay

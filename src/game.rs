@@ -43,6 +43,7 @@ pub struct GridMotion {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum GamePhase {
     Playing,
+    LevelClear,
     GameOver,
 }
 
@@ -59,6 +60,8 @@ pub struct GameState {
     /// Zero-based index into LEVELS — increments each time the level is cleared.
     pub level: usize,
     pub phase: GamePhase,
+    /// Counts frames spent in the LevelClear phase before advancing.
+    pub pause_timer: u32,
 }
 
 impl GameState {
@@ -75,6 +78,7 @@ impl GameState {
             lives: 3,
             level: 0,
             phase: GamePhase::Playing,
+            pause_timer: 0,
         }
     }
 }
@@ -302,6 +306,31 @@ pub fn check_invasion(state: &mut GameState, grid_top: f64) {
     let grid_bottom = grid_top + state.grid.offset_y + GRID_H;
     if grid_bottom >= state.ship.y {
         state.phase = GamePhase::GameOver;
+    }
+}
+
+/// Frames the "LEVEL CLEAR" screen is shown before loading the next level — easy to tune.
+pub const LEVEL_CLEAR_PAUSE: u32 = 120; // ~2 s at 60 fps
+
+/// If all aliens are dead and the game is still Playing, transition to LevelClear
+/// and reset the pause timer. Call every frame during the Playing phase.
+pub fn check_level_clear(state: &mut GameState) {
+    if state.phase != GamePhase::Playing { return; }
+    if all_aliens_dead(state) {
+        state.phase = GamePhase::LevelClear;
+        state.pause_timer = 0;
+    }
+}
+
+/// Advance the pause timer while in the LevelClear phase.
+/// When the timer reaches LEVEL_CLEAR_PAUSE, loads the next level and
+/// returns to Playing. Does nothing in any other phase.
+pub fn tick_level_clear(state: &mut GameState) {
+    if state.phase != GamePhase::LevelClear { return; }
+    state.pause_timer += 1;
+    if state.pause_timer >= LEVEL_CLEAR_PAUSE {
+        advance_level(state);
+        state.phase = GamePhase::Playing;
     }
 }
 
@@ -898,6 +927,77 @@ mod tests {
     #[test]
     fn level_2_pattern_has_five_rows() {
         assert_eq!(LEVEL_2.len(), 5);
+    }
+
+    // ── Level-clear pause tests ───────────────────────────────────────────────
+
+    #[test]
+    fn check_level_clear_transitions_when_all_aliens_dead() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        for a in &mut state.aliens { a.alive = false; }
+        check_level_clear(&mut state);
+        assert_eq!(state.phase, GamePhase::LevelClear);
+    }
+
+    #[test]
+    fn check_level_clear_resets_pause_timer() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        for a in &mut state.aliens { a.alive = false; }
+        state.pause_timer = 99;
+        check_level_clear(&mut state);
+        assert_eq!(state.pause_timer, 0);
+    }
+
+    #[test]
+    fn check_level_clear_does_nothing_while_aliens_remain() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        check_level_clear(&mut state);
+        assert_eq!(state.phase, GamePhase::Playing);
+    }
+
+    #[test]
+    fn tick_level_clear_increments_pause_timer() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::LevelClear;
+        tick_level_clear(&mut state);
+        assert_eq!(state.pause_timer, 1);
+    }
+
+    #[test]
+    fn tick_level_clear_does_nothing_when_not_level_clear() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        tick_level_clear(&mut state);
+        assert_eq!(state.pause_timer, 0);
+        assert_eq!(state.phase, GamePhase::Playing);
+    }
+
+    #[test]
+    fn tick_level_clear_advances_level_after_pause() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        state.phase = GamePhase::LevelClear;
+        state.pause_timer = LEVEL_CLEAR_PAUSE - 1;
+        tick_level_clear(&mut state);
+        assert_eq!(state.phase, GamePhase::Playing);
+        // Level should have advanced and a new grid loaded
+        assert!(state.aliens.iter().any(|a| a.alive));
+    }
+
+    #[test]
+    fn tick_level_clear_does_not_advance_before_pause_expires() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        for a in &mut state.aliens { a.alive = false; }
+        state.phase = GamePhase::LevelClear;
+        state.pause_timer = LEVEL_CLEAR_PAUSE - 2;
+        tick_level_clear(&mut state);
+        assert_eq!(state.phase, GamePhase::LevelClear);
+        // Grid should still be empty — advance_level not yet called
+        assert!(!state.aliens.iter().any(|a| a.alive));
     }
 }
 
