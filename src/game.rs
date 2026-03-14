@@ -42,6 +42,7 @@ pub struct GridMotion {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum GamePhase {
+    Attract,
     Playing,
     LevelClear,
     GameOver,
@@ -77,7 +78,7 @@ impl GameState {
             score: 0,
             lives: 3,
             level: 0,
-            phase: GamePhase::Playing,
+            phase: GamePhase::Attract,
             pause_timer: 0,
         }
     }
@@ -813,8 +814,8 @@ mod tests {
     // ── Game over / invasion tests ────────────────────────────────────────────
 
     #[test]
-    fn phase_starts_as_playing() {
-        assert_eq!(GameState::new(800, 600).phase, GamePhase::Playing);
+    fn phase_starts_as_attract() {
+        assert_eq!(GameState::new(800, 600).phase, GamePhase::Attract);
     }
 
     #[test]
@@ -998,6 +999,65 @@ mod tests {
         assert_eq!(state.phase, GamePhase::LevelClear);
         // Grid should still be empty — advance_level not yet called
         assert!(!state.aliens.iter().any(|a| a.alive));
+    }
+
+    // ── reset_game tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn reset_game_sets_phase_to_playing() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::GameOver;
+        reset_game(&mut state);
+        assert_eq!(state.phase, GamePhase::Playing);
+    }
+
+    #[test]
+    fn reset_game_restores_lives() {
+        let mut state = GameState::new(800, 600);
+        state.lives = 0;
+        reset_game(&mut state);
+        assert_eq!(state.lives, 3);
+    }
+
+    #[test]
+    fn reset_game_clears_score() {
+        let mut state = GameState::new(800, 600);
+        state.score = 500;
+        reset_game(&mut state);
+        assert_eq!(state.score, 0);
+    }
+
+    #[test]
+    fn reset_game_resets_to_level_zero() {
+        let mut state = GameState::new(800, 600);
+        state.level = 2;
+        reset_game(&mut state);
+        assert_eq!(state.level, 0);
+    }
+
+    #[test]
+    fn reset_game_loads_fresh_alien_grid() {
+        let mut state = GameState::new(800, 600);
+        reset_game(&mut state);
+        assert_eq!(state.aliens.iter().filter(|a| a.alive).count(), 55);
+    }
+
+    #[test]
+    fn reset_game_clears_bullets() {
+        let mut state = GameState::new(800, 600);
+        state.bullet = Some(Bullet { x: 100.0, y: 100.0 });
+        state.alien_bullet = Some(AlienBullet { x: 200.0, y: 200.0 });
+        reset_game(&mut state);
+        assert!(state.bullet.is_none());
+        assert!(state.alien_bullet.is_none());
+    }
+
+    #[test]
+    fn reset_game_resets_ship_to_centre() {
+        let mut state = GameState::new(800, 600);
+        state.ship.x = 100.0;
+        reset_game(&mut state);
+        assert_eq!(state.ship.x, 400.0);
     }
 }
 
