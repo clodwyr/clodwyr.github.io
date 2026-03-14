@@ -170,6 +170,7 @@ pub fn step_grid(state: &mut GameState, strategy: &dyn SpeedStrategy, max_offset
     if alive_count == 0 { return; }
     state.grid.tick = state.grid.tick.wrapping_add(1);
     if state.grid.tick % strategy.tick_interval(alive_count) != 0 { return; }
+    state.grid.anim_frame = !state.grid.anim_frame;
     let step = strategy.step_px(alive_count);
     let new_offset = state.grid.offset_x + state.grid.direction as f64 * step;
     if new_offset.abs() >= max_offset_x {
