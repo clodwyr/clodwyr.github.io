@@ -3,6 +3,8 @@ pub struct Alien {
     pub row: u32,  // row index in grid (0-based)
     pub alive: bool,
     pub sprite: AlienKind,
+    /// Counts down each frame while the explosion is displayed. Zero = no explosion.
+    pub explosion_timer: u8,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -107,6 +109,8 @@ pub const GRID_STEP_PX: f64 = 4.0;
 pub const GRID_TICK_MAX: u32 = 30;
 /// Frames between grid moves when only one alien remains (fastest) — easy to tune.
 pub const GRID_TICK_MIN: u32 = 4;
+/// How many frames an explosion sprite is shown after an alien is shot.
+pub const EXPLOSION_FRAMES: u8 = 20;
 
 /// Pluggable speed strategy — swap for different difficulty curves.
 pub trait SpeedStrategy {
@@ -236,10 +240,19 @@ pub fn check_bullet_hit(state: &mut GameState, grid_left: f64, grid_top: f64) {
 
         if bx >= left && bx < right && by >= top && by < bottom {
             alien.alive = false;
+            alien.explosion_timer = EXPLOSION_FRAMES;
             state.bullet = None;
             state.score += 1;
             return;
         }
+    }
+}
+
+/// Tick down explosion timers on dead aliens.
+/// Only decrements when the alien is dead (`!alive`) and has a non-zero timer.
+pub fn tick_explosions(state: &mut GameState) {
+    for alien in state.aliens.iter_mut().filter(|a| !a.alive && a.explosion_timer > 0) {
+        alien.explosion_timer -= 1;
     }
 }
 
@@ -1244,6 +1257,7 @@ pub fn build_alien_grid(pattern: LevelPattern) -> Vec<Alien> {
                 row: row as u32,
                 alive: true,
                 sprite,
+                explosion_timer: 0,
             });
         }
     }

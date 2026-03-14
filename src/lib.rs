@@ -3,9 +3,9 @@ pub mod game;
 use game::{
     check_alien_hit_ship, check_bullet_hit, check_invasion, check_level_clear, fire,
     fire_alien_bullet, move_ship, reset_game, step_alien_bullet, step_bullet, step_grid,
-    tick_game_over, tick_level_clear, AlienKind, ClassicSpeed, CrispMovement, Direction,
-    GamePhase, GameState, CELL_H, CELL_W, GAME_OVER_PAUSE, GRID_COLS, GRID_W, PLAY_MARGIN,
-    SHIP_HALF_H, SHIP_STEP,
+    tick_explosions, tick_game_over, tick_level_clear, AlienKind, ClassicSpeed, CrispMovement,
+    Direction, GamePhase, GameState, CELL_H, CELL_W, GAME_OVER_PAUSE, GRID_COLS, GRID_W,
+    PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -75,9 +75,10 @@ pub fn start() {
     let sprites: Rc<RefCell<HashMap<&'static str, HtmlImageElement>>> =
         Rc::new(RefCell::new(HashMap::new()));
     let loaded = Rc::new(RefCell::new(0u32));
-    const TOTAL: u32 = 7;
+    const TOTAL: u32 = 10;
 
-    for name in ["crab", "crab_f2", "squid", "squid_f2", "octopus", "octopus_f2", "ship"] {
+    for name in ["crab", "crab_f2", "squid", "squid_f2", "octopus", "octopus_f2", "ship",
+                 "crab_exp", "squid_exp", "octopus_exp"] {
         let img = HtmlImageElement::new().expect("failed to create image");
         img.set_src(&format!("assets/{name}.png"));
 
@@ -206,6 +207,7 @@ fn start_loop(
             // These run outside the Playing guard — each owns its respective phase
             tick_level_clear(&mut s);
             tick_game_over(&mut s);
+            tick_explosions(&mut s);
         }
 
         // ── Draw ──────────────────────────────────────────────────────────────
@@ -242,11 +244,19 @@ fn draw_scene(
     let grid_left = (viewport_w - GRID_W) / 2.0 + state.grid.offset_x;
     let grid_top  = viewport_h * 0.15 + state.grid.offset_y;
 
-    for alien in state.aliens.iter().filter(|a| a.alive) {
-        let sprite_name = match alien.sprite {
-            AlienKind::Crab    => if state.grid.anim_frame { "crab_f2"    } else { "crab"    },
-            AlienKind::Squid   => if state.grid.anim_frame { "squid_f2"   } else { "squid"   },
-            AlienKind::Octopus => if state.grid.anim_frame { "octopus_f2" } else { "octopus" },
+    for alien in state.aliens.iter().filter(|a| a.alive || a.explosion_timer > 0) {
+        let sprite_name = if !alien.alive {
+            match alien.sprite {
+                AlienKind::Crab    => "crab_exp",
+                AlienKind::Squid   => "squid_exp",
+                AlienKind::Octopus => "octopus_exp",
+            }
+        } else {
+            match alien.sprite {
+                AlienKind::Crab    => if state.grid.anim_frame { "crab_f2"    } else { "crab"    },
+                AlienKind::Squid   => if state.grid.anim_frame { "squid_f2"   } else { "squid"   },
+                AlienKind::Octopus => if state.grid.anim_frame { "octopus_f2" } else { "octopus" },
+            }
         };
         if let Some(img) = sprites.get(sprite_name) {
             let cell_x = grid_left + alien.col as f64 * CELL_W;
