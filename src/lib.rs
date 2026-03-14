@@ -2,9 +2,9 @@ pub mod game;
 
 use game::{
     advance_level, all_aliens_dead, build_alien_grid, check_alien_hit_ship, check_bullet_hit,
-    fire, fire_alien_bullet, move_ship, step_alien_bullet, step_bullet, step_grid, AlienKind,
-    ClassicSpeed, CrispMovement, Direction, GameState, CELL_H, CELL_W, GRID_COLS, GRID_W,
-    LEVEL_1, PLAY_MARGIN, SHIP_STEP,
+    check_invasion, fire, fire_alien_bullet, move_ship, step_alien_bullet, step_bullet,
+    step_grid, AlienKind, ClassicSpeed, CrispMovement, Direction, GamePhase, GameState,
+    CELL_H, CELL_W, GRID_COLS, GRID_W, LEVEL_1, PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -144,41 +144,47 @@ fn start_loop(
         // ── Update ────────────────────────────────────────────────────────────
         {
             let mut s = state.borrow_mut();
-            let held = keys.borrow();
-            if held.contains_key("ArrowLeft") {
-                move_ship(&mut s.ship, Direction::Left, &movement, ship_left, ship_right);
-            }
-            if held.contains_key("ArrowRight") {
-                move_ship(&mut s.ship, Direction::Right, &movement, ship_left, ship_right);
-            }
-            if held.contains_key(" ") {
-                fire(&mut s);
-            }
-            step_bullet(&mut s, grid_top);
-            // Collision: compute current grid canvas origin from live offsets
-            let cur_grid_left = base_grid_left + s.grid.offset_x;
-            let cur_grid_top  = grid_top + s.grid.offset_y;
-            check_bullet_hit(&mut s, cur_grid_left, cur_grid_top);
-            step_grid(&mut s, &speed, max_offset_x);
 
-            // Alien shooting — fire from a cycling column every interval
-            let f = {
-                let mut fc = frame.borrow_mut();
-                *fc += 1;
-                *fc
-            };
-            if f % ALIEN_FIRE_INTERVAL == 0 {
-                let col = (f / ALIEN_FIRE_INTERVAL) % GRID_COLS;
-                step_alien_bullet(&mut s, viewport_h);
-                fire_alien_bullet(&mut s, col, cur_grid_left, cur_grid_top);
-            } else {
-                step_alien_bullet(&mut s, viewport_h);
-            }
-            check_alien_hit_ship(&mut s);
+            if s.phase == GamePhase::Playing {
+                let held = keys.borrow();
+                if held.contains_key("ArrowLeft") {
+                    move_ship(&mut s.ship, Direction::Left, &movement, ship_left, ship_right);
+                }
+                if held.contains_key("ArrowRight") {
+                    move_ship(&mut s.ship, Direction::Right, &movement, ship_left, ship_right);
+                }
+                if held.contains_key(" ") {
+                    fire(&mut s);
+                }
+                step_bullet(&mut s, grid_top);
+                // Collision: compute current grid canvas origin from live offsets
+                let cur_grid_left = base_grid_left + s.grid.offset_x;
+                let cur_grid_top  = grid_top + s.grid.offset_y;
+                check_bullet_hit(&mut s, cur_grid_left, cur_grid_top);
+                step_grid(&mut s, &speed, max_offset_x);
 
-            // Level clear — advance when all aliens are dead
-            if all_aliens_dead(&s) {
-                advance_level(&mut s);
+                // Alien shooting — fire from a cycling column every interval
+                let f = {
+                    let mut fc = frame.borrow_mut();
+                    *fc += 1;
+                    *fc
+                };
+                // Bullet clears when it passes below the ship, not the canvas bottom
+                let bullet_floor = s.ship.y + SHIP_HALF_H;
+                if f % ALIEN_FIRE_INTERVAL == 0 {
+                    let col = (f / ALIEN_FIRE_INTERVAL) % GRID_COLS;
+                    step_alien_bullet(&mut s, bullet_floor);
+                    fire_alien_bullet(&mut s, col, cur_grid_left, cur_grid_top);
+                } else {
+                    step_alien_bullet(&mut s, bullet_floor);
+                }
+                check_alien_hit_ship(&mut s);
+                check_invasion(&mut s, grid_top);
+
+                // Level clear — advance when all aliens are dead
+                if all_aliens_dead(&s) {
+                    advance_level(&mut s);
+                }
             }
         }
 
@@ -253,6 +259,17 @@ fn draw_scene(
     if let Some(ref ab) = state.alien_bullet {
         ctx.set_fill_style_str("#ff4444");
         ctx.fill_rect(ab.x - 1.5, ab.y, 3.0, 12.0);
+    }
+
+    // Game over overlay
+    if state.phase == GamePhase::GameOver {
+        ctx.set_fill_style_str("rgba(0,0,0,0.55)");
+        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.set_fill_style_str("#68fb35");
+        ctx.set_font("bold 64px monospace");
+        ctx.set_text_align("center");
+        ctx.fill_text("GAME OVER", viewport_w / 2.0, viewport_h / 2.0)
+            .expect("fill_text failed");
     }
 }
 

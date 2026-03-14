@@ -40,6 +40,12 @@ pub struct GridMotion {
     pub anim_frame: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum GamePhase {
+    Playing,
+    GameOver,
+}
+
 pub struct GameState {
     pub width: u32,
     pub height: u32,
@@ -52,6 +58,7 @@ pub struct GameState {
     pub lives: u32,
     /// Zero-based index into LEVELS — increments each time the level is cleared.
     pub level: usize,
+    pub phase: GamePhase,
 }
 
 impl GameState {
@@ -67,6 +74,7 @@ impl GameState {
             score: 0,
             lives: 3,
             level: 0,
+            phase: GamePhase::Playing,
         }
     }
 }
@@ -279,6 +287,21 @@ pub fn check_alien_hit_ship(state: &mut GameState) {
     {
         state.lives = state.lives.saturating_sub(1);
         state.alien_bullet = None;
+        if state.lives == 0 {
+            state.phase = GamePhase::GameOver;
+        }
+    }
+}
+
+/// Check whether the alien grid has descended to the ship's level (invasion).
+/// `grid_top` is the canvas y of the grid's top-left corner at offset_y = 0.
+/// If any alive alien's bottom edge reaches or passes the ship, sets phase to GameOver.
+/// Does nothing if no aliens are alive.
+pub fn check_invasion(state: &mut GameState, grid_top: f64) {
+    if !state.aliens.iter().any(|a| a.alive) { return; }
+    let grid_bottom = grid_top + state.grid.offset_y + GRID_H;
+    if grid_bottom >= state.ship.y {
+        state.phase = GamePhase::GameOver;
     }
 }
 
@@ -737,6 +760,59 @@ mod tests {
         let mut state = GameState::new(800, 600);
         check_alien_hit_ship(&mut state);
         assert_eq!(state.lives, 3);
+    }
+
+    #[test]
+    fn check_alien_hit_ship_sets_game_over_when_last_life_lost() {
+        let mut state = GameState::new(800, 600);
+        state.lives = 1;
+        state.alien_bullet = Some(AlienBullet { x: state.ship.x, y: state.ship.y });
+        check_alien_hit_ship(&mut state);
+        assert_eq!(state.lives, 0);
+        assert_eq!(state.phase, GamePhase::GameOver);
+    }
+
+    #[test]
+    fn check_alien_hit_ship_stays_playing_while_lives_remain() {
+        let mut state = GameState::new(800, 600);
+        state.lives = 2;
+        state.alien_bullet = Some(AlienBullet { x: state.ship.x, y: state.ship.y });
+        check_alien_hit_ship(&mut state);
+        assert_eq!(state.phase, GamePhase::Playing);
+    }
+
+    // ── Game over / invasion tests ────────────────────────────────────────────
+
+    #[test]
+    fn phase_starts_as_playing() {
+        assert_eq!(GameState::new(800, 600).phase, GamePhase::Playing);
+    }
+
+    #[test]
+    fn check_invasion_sets_game_over_when_grid_reaches_ship() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        // grid_top = 0.0 in this test; drop grid until its bottom touches ship.y
+        state.grid.offset_y = state.ship.y - GRID_H;
+        check_invasion(&mut state, 0.0);
+        assert_eq!(state.phase, GamePhase::GameOver);
+    }
+
+    #[test]
+    fn check_invasion_does_nothing_while_grid_above_ship() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        state.grid.offset_y = 0.0;
+        check_invasion(&mut state, 0.0);
+        assert_eq!(state.phase, GamePhase::Playing);
+    }
+
+    #[test]
+    fn check_invasion_does_nothing_when_no_aliens() {
+        let mut state = GameState::new(800, 600);
+        // no aliens — grid is empty, should not trigger game over
+        check_invasion(&mut state, 0.0);
+        assert_eq!(state.phase, GamePhase::Playing);
     }
 
     // ── Level tests ───────────────────────────────────────────────────────────
