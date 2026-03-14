@@ -22,12 +22,22 @@ pub struct Bullet {
     pub y: f64,
 }
 
+/// Tracks the alien grid's position and movement direction.
+/// `offset_x` is the signed shift from the grid's centred position;
+/// `offset_y` accumulates the downward drops on wall reversals.
+pub struct GridMotion {
+    pub offset_x: f64,
+    pub offset_y: f64,
+    pub direction: i8,  // +1 = right, -1 = left
+}
+
 pub struct GameState {
     pub width: u32,
     pub height: u32,
     pub aliens: Vec<Alien>,
     pub ship: Ship,
     pub bullet: Option<Bullet>,
+    pub grid: GridMotion,
 }
 
 impl GameState {
@@ -38,9 +48,41 @@ impl GameState {
             aliens: Vec::new(),
             ship: Ship { x: width as f64 / 2.0, y: height as f64 - 40.0 },
             bullet: None,
+            grid: GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1 },
         }
     }
 }
+
+// ── Grid geometry ─────────────────────────────────────────────────────────────
+
+pub const CELL_W: f64 = 64.0;
+pub const CELL_H: f64 = 48.0;
+pub const GRID_COLS: u32 = 11;
+pub const GRID_ROWS: u32 = 5;
+pub const GRID_W: f64 = GRID_COLS as f64 * CELL_W;
+pub const GRID_H: f64 = GRID_ROWS as f64 * CELL_H;
+/// Extra space beyond the grid on each side — defines the play area and the
+/// maximum distance the grid can shift before reversing. Easy to tune.
+pub const PLAY_MARGIN: f64 = 48.0;
+
+// ── Grid movement constants ───────────────────────────────────────────────────
+
+/// Grid speed with a full formation — easy to tune.
+pub const GRID_BASE_STEP: f64 = 1.0;
+/// Grid speed when only one alien remains — easy to tune.
+pub const GRID_MAX_STEP:  f64 = 6.0;
+
+/// Pluggable speed strategy — swap for different difficulty curves.
+pub trait SpeedStrategy {
+    fn step_px(&self, alive_count: usize) -> f64;
+}
+
+/// Classic Space Invaders speed: linearly faster as aliens are killed.
+pub struct ClassicSpeed {
+    pub total_aliens: usize,
+}
+
+// ── Ship constants ────────────────────────────────────────────────────────────
 
 /// How many pixels the ship moves per step — easy to tune.
 pub const SHIP_STEP: f64 = 4.0;
@@ -71,6 +113,32 @@ pub struct CrispMovement {
 impl MovementStrategy for CrispMovement {
     fn step(&self) -> f64 {
         self.step_px
+    }
+}
+
+impl SpeedStrategy for ClassicSpeed {
+    fn step_px(&self, alive_count: usize) -> f64 {
+        if self.total_aliens == 0 { return GRID_BASE_STEP; }
+        let dead = self.total_aliens.saturating_sub(alive_count);
+        let t = dead as f64 / self.total_aliens as f64;
+        GRID_BASE_STEP + t * (GRID_MAX_STEP - GRID_BASE_STEP)
+    }
+}
+
+/// Advance the alien grid one step in its current direction.
+/// If the step would push `offset_x` beyond `±max_offset_x`, the grid instead
+/// reverses direction and drops down by one `CELL_H` without moving horizontally.
+/// Does nothing if no aliens are alive.
+pub fn step_grid(state: &mut GameState, strategy: &dyn SpeedStrategy, max_offset_x: f64) {
+    let alive_count = state.aliens.iter().filter(|a| a.alive).count();
+    if alive_count == 0 { return; }
+    let step = strategy.step_px(alive_count);
+    let new_offset = state.grid.offset_x + state.grid.direction as f64 * step;
+    if new_offset.abs() >= max_offset_x {
+        state.grid.direction *= -1;
+        state.grid.offset_y += CELL_H;
+    } else {
+        state.grid.offset_x = new_offset;
     }
 }
 
@@ -263,6 +331,74 @@ mod tests {
         assert!(state.bullet.is_none());
         fire(&mut state); // should spawn a new bullet
         assert!(state.bullet.is_some());
+    }
+
+    // ── Grid movement tests ───────────────────────────────────────────────────
+
+    fn classic_55() -> ClassicSpeed { ClassicSpeed { total_aliens: 55 } }
+
+    #[test]
+    fn step_grid_moves_right_by_step() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        step_grid(&mut state, &classic_55(), 100.0);
+        assert_eq!(state.grid.offset_x, GRID_BASE_STEP);
+        assert_eq!(state.grid.offset_y, 0.0);
+    }
+
+    #[test]
+    fn step_grid_reverses_and_drops_at_right_wall() {
+        let mut state = GameState::new(800, 600);
+        state.grid.offset_x = 99.0; // one step would exceed max_offset=100
+        state.aliens = build_alien_grid(LEVEL_1);
+        step_grid(&mut state, &classic_55(), 100.0);
+        assert_eq!(state.grid.direction, -1);
+        assert_eq!(state.grid.offset_y, CELL_H);
+        assert_eq!(state.grid.offset_x, 99.0); // x unchanged on reversal frame
+    }
+
+    #[test]
+    fn step_grid_reverses_and_drops_at_left_wall() {
+        let mut state = GameState::new(800, 600);
+        state.grid.offset_x = -99.0;
+        state.grid.direction = -1;
+        state.aliens = build_alien_grid(LEVEL_1);
+        step_grid(&mut state, &classic_55(), 100.0);
+        assert_eq!(state.grid.direction, 1);
+        assert_eq!(state.grid.offset_y, CELL_H);
+        assert_eq!(state.grid.offset_x, -99.0);
+    }
+
+    #[test]
+    fn step_grid_noop_when_no_alive_aliens() {
+        let mut state = GameState::new(800, 600);
+        step_grid(&mut state, &classic_55(), 100.0);
+        // Empty aliens vec — should not crash and grid stays put
+        let mut state2 = GameState::new(800, 600);
+        state2.aliens = build_alien_grid(LEVEL_1);
+        for a in &mut state2.aliens { a.alive = false; }
+        let before = state2.grid.offset_x;
+        step_grid(&mut state2, &classic_55(), 100.0);
+        assert_eq!(state2.grid.offset_x, before);
+    }
+
+    #[test]
+    fn classic_speed_at_full_count_returns_base() {
+        let s = ClassicSpeed { total_aliens: 55 };
+        assert_eq!(s.step_px(55), GRID_BASE_STEP);
+    }
+
+    #[test]
+    fn classic_speed_at_one_alien_returns_max() {
+        let s = ClassicSpeed { total_aliens: 55 };
+        assert_eq!(s.step_px(1), GRID_BASE_STEP + (54.0 / 55.0) * (GRID_MAX_STEP - GRID_BASE_STEP));
+    }
+
+    #[test]
+    fn classic_speed_increases_as_aliens_die() {
+        let s = ClassicSpeed { total_aliens: 55 };
+        assert!(s.step_px(30) > s.step_px(55));
+        assert!(s.step_px(1)  > s.step_px(30));
     }
 }
 

@@ -1,8 +1,8 @@
 pub mod game;
 
 use game::{
-    build_alien_grid, fire, move_ship, step_bullet, AlienKind, CrispMovement, Direction,
-    GameState, LEVEL_1, SHIP_STEP,
+    build_alien_grid, fire, move_ship, step_bullet, step_grid, AlienKind, ClassicSpeed,
+    CrispMovement, Direction, GameState, CELL_H, CELL_W, GRID_W, LEVEL_1, PLAY_MARGIN, SHIP_STEP,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -10,17 +10,6 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement, KeyboardEvent};
-
-// ── Rendering constants ───────────────────────────────────────────────────────
-
-const CELL_W: f64 = 64.0;
-const CELL_H: f64 = 48.0;
-const COLS: u32 = 11;
-const ROWS: u32 = 5;
-
-fn grid_pixel_width() -> f64 { COLS as f64 * CELL_W }
-#[allow(dead_code)]
-fn grid_pixel_height() -> f64 { ROWS as f64 * CELL_H }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -47,10 +36,11 @@ pub fn start() {
             .expect("failed to get 2d context"),
     );
 
-    // Shared game state
+    // Shared game state — populate the first level's alien grid immediately
     let state = Rc::new(RefCell::new(
         GameState::new(viewport_w as u32, viewport_h as u32)
     ));
+    state.borrow_mut().aliens = build_alien_grid(LEVEL_1);
 
     // Key state: which keys are currently held
     let keys: Rc<RefCell<HashMap<String, bool>>> = Rc::new(RefCell::new(HashMap::new()));
@@ -131,13 +121,17 @@ fn start_loop(
     let raf_cb: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
     let raf_cb_init = raf_cb.clone();
 
-    let movement = CrispMovement { step_px: SHIP_STEP };
+    let movement     = CrispMovement { step_px: SHIP_STEP };
+    let speed        = ClassicSpeed { total_aliens: 55 };
 
-    // Ship is constrained to the alien grid's horizontal extent
-    let grid_left   = (viewport_w - grid_pixel_width()) / 2.0;
-    let grid_top    = viewport_h * 0.15;
-    let ship_left   = grid_left + game::SHIP_HALF_W;
-    let ship_right  = grid_left + grid_pixel_width() - game::SHIP_HALF_W;
+    // Play area: grid centred with PLAY_MARGIN of breathing room on each side.
+    // The grid shifts ±PLAY_MARGIN from centre; ship is bounded to the same area.
+    let max_offset_x   = PLAY_MARGIN;
+    let base_grid_left = (viewport_w - GRID_W) / 2.0;
+    let play_left      = base_grid_left - PLAY_MARGIN;
+    let grid_top       = viewport_h * 0.15;
+    let ship_left      = play_left + game::SHIP_HALF_W;
+    let ship_right     = play_left + GRID_W + 2.0 * PLAY_MARGIN - game::SHIP_HALF_W;
 
     *raf_cb_init.borrow_mut() = Some(Closure::wrap(Box::new(move || {
         // ── Update ────────────────────────────────────────────────────────────
@@ -154,6 +148,7 @@ fn start_loop(
                 fire(&mut s);
             }
             step_bullet(&mut s, grid_top);
+            step_grid(&mut s, &speed, max_offset_x);
         }
 
         // ── Draw ──────────────────────────────────────────────────────────────
@@ -187,12 +182,10 @@ fn draw_scene(
     viewport_w: f64,
     viewport_h: f64,
 ) {
-    let grid_left = (viewport_w - grid_pixel_width()) / 2.0;
-    let grid_top  = viewport_h * 0.15;
+    let grid_left = (viewport_w - GRID_W) / 2.0 + state.grid.offset_x;
+    let grid_top  = viewport_h * 0.15 + state.grid.offset_y;
 
-    let aliens = build_alien_grid(LEVEL_1);
-
-    for alien in &aliens {
+    for alien in state.aliens.iter().filter(|a| a.alive) {
         let sprite_name = match alien.sprite {
             AlienKind::Crab    => "crab",
             AlienKind::Squid   => "squid",
