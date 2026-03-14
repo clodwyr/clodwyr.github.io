@@ -1,8 +1,9 @@
 pub mod game;
 
 use game::{
-    build_alien_grid, fire, move_ship, step_bullet, step_grid, AlienKind, ClassicSpeed,
-    CrispMovement, Direction, GameState, CELL_H, CELL_W, GRID_W, LEVEL_1, PLAY_MARGIN, SHIP_STEP,
+    build_alien_grid, check_bullet_hit, fire, move_ship, step_bullet, step_grid, AlienKind,
+    ClassicSpeed, CrispMovement, Direction, GameState, CELL_H, CELL_W, GRID_W, LEVEL_1,
+    PLAY_MARGIN, SHIP_STEP,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -148,6 +149,10 @@ fn start_loop(
                 fire(&mut s);
             }
             step_bullet(&mut s, grid_top);
+            // Collision: compute current grid canvas origin from live offsets
+            let cur_grid_left = base_grid_left + s.grid.offset_x;
+            let cur_grid_top  = grid_top + s.grid.offset_y;
+            check_bullet_hit(&mut s, cur_grid_left, cur_grid_top);
             step_grid(&mut s, &speed, max_offset_x);
         }
 

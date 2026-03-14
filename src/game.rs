@@ -38,6 +38,8 @@ pub struct GameState {
     pub ship: Ship,
     pub bullet: Option<Bullet>,
     pub grid: GridMotion,
+    pub score: u32,
+    pub lives: u32,
 }
 
 impl GameState {
@@ -49,6 +51,8 @@ impl GameState {
             ship: Ship { x: width as f64 / 2.0, y: height as f64 - 40.0 },
             bullet: None,
             grid: GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1 },
+            score: 0,
+            lives: 3,
         }
     }
 }
@@ -156,6 +160,35 @@ pub fn move_ship(ship: &mut Ship, direction: Direction, strategy: &dyn MovementS
 pub fn fire(state: &mut GameState) {
     if state.bullet.is_none() {
         state.bullet = Some(Bullet { x: state.ship.x, y: state.ship.y });
+    }
+}
+
+/// Check whether the player bullet has hit any alive alien.
+/// `grid_left` and `grid_top` are the canvas coordinates of the grid's top-left corner.
+/// On a hit: the alien is marked dead, the bullet is cleared, and score is incremented.
+/// Only the first hit alien is processed per call (one bullet = one kill).
+pub fn check_bullet_hit(state: &mut GameState, grid_left: f64, grid_top: f64) {
+    let bx = match state.bullet {
+        Some(ref b) => b.x,
+        None => return,
+    };
+    let by = match state.bullet {
+        Some(ref b) => b.y,
+        None => return,
+    };
+
+    for alien in state.aliens.iter_mut().filter(|a| a.alive) {
+        let left   = grid_left + alien.col as f64 * CELL_W;
+        let right  = left + CELL_W;
+        let top    = grid_top  + alien.row as f64 * CELL_H;
+        let bottom = top + CELL_H;
+
+        if bx >= left && bx < right && by >= top && by < bottom {
+            alien.alive = false;
+            state.bullet = None;
+            state.score += 1;
+            return;
+        }
     }
 }
 
@@ -399,6 +432,74 @@ mod tests {
         let s = ClassicSpeed { total_aliens: 55 };
         assert!(s.step_px(30) > s.step_px(55));
         assert!(s.step_px(1)  > s.step_px(30));
+    }
+
+    // ── Collision tests ───────────────────────────────────────────────────────
+
+    // Helper: state with a full LEVEL_1 grid and a bullet placed at a known alien cell.
+    // grid_left=0, grid_top=0 makes the maths trivial: alien(col,row) occupies
+    // [col*CELL_W .. (col+1)*CELL_W] × [row*CELL_H .. (row+1)*CELL_H].
+    fn state_with_bullet_at_alien(col: u32, row: u32) -> GameState {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        // Centre of that alien's cell when grid_left=0, grid_top=0
+        state.bullet = Some(Bullet {
+            x: col as f64 * CELL_W + CELL_W / 2.0,
+            y: row as f64 * CELL_H + CELL_H / 2.0,
+        });
+        state
+    }
+
+    #[test]
+    fn score_starts_at_zero() {
+        assert_eq!(GameState::new(800, 600).score, 0);
+    }
+
+    #[test]
+    fn lives_start_at_three() {
+        assert_eq!(GameState::new(800, 600).lives, 3);
+    }
+
+    #[test]
+    fn bullet_hit_marks_alien_dead() {
+        let mut state = state_with_bullet_at_alien(0, 0);
+        check_bullet_hit(&mut state, 0.0, 0.0);
+        let hit = state.aliens.iter().find(|a| a.col == 0 && a.row == 0).unwrap();
+        assert!(!hit.alive);
+    }
+
+    #[test]
+    fn bullet_hit_clears_bullet() {
+        let mut state = state_with_bullet_at_alien(0, 0);
+        check_bullet_hit(&mut state, 0.0, 0.0);
+        assert!(state.bullet.is_none());
+    }
+
+    #[test]
+    fn bullet_hit_increments_score() {
+        let mut state = state_with_bullet_at_alien(0, 0);
+        check_bullet_hit(&mut state, 0.0, 0.0);
+        assert_eq!(state.score, 1);
+    }
+
+    #[test]
+    fn bullet_miss_leaves_all_aliens_alive() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        // Bullet far to the left of the grid
+        state.bullet = Some(Bullet { x: -100.0, y: -100.0 });
+        check_bullet_hit(&mut state, 0.0, 0.0);
+        assert!(state.aliens.iter().all(|a| a.alive));
+        assert_eq!(state.score, 0);
+    }
+
+    #[test]
+    fn bullet_only_hits_one_alien_per_shot() {
+        // Two aliens share the same column — only the front (highest row) should die
+        let mut state = state_with_bullet_at_alien(5, 4); // bottom row
+        check_bullet_hit(&mut state, 0.0, 0.0);
+        let dead: Vec<_> = state.aliens.iter().filter(|a| !a.alive).collect();
+        assert_eq!(dead.len(), 1);
     }
 }
 
