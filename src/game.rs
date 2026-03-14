@@ -314,14 +314,17 @@ pub fn check_alien_hit_ship(state: &mut GameState) {
     }
 }
 
-/// Check whether the alien grid has descended to the ship's level (invasion).
+/// Check whether the lowest surviving alien has descended to the ship's level (invasion).
 /// `grid_top` is the canvas y of the grid's top-left corner at offset_y = 0.
-/// If any alive alien's bottom edge reaches or passes the ship, sets phase to GameOver.
+/// Finds the highest row index among alive aliens and checks only that row's bottom edge.
 /// Does nothing if no aliens are alive.
 pub fn check_invasion(state: &mut GameState, grid_top: f64) {
-    if !state.aliens.iter().any(|a| a.alive) { return; }
-    let grid_bottom = grid_top + state.grid.offset_y + GRID_H;
-    if grid_bottom >= state.ship.y {
+    let max_row = match state.aliens.iter().filter(|a| a.alive).map(|a| a.row).max() {
+        Some(r) => r,
+        None => return,
+    };
+    let lowest_bottom = grid_top + state.grid.offset_y + (max_row + 1) as f64 * CELL_H;
+    if lowest_bottom >= state.ship.y {
         state.phase = GamePhase::GameOver;
     }
 }
