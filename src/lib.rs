@@ -1,17 +1,19 @@
 pub mod game;
 
 use game::{
-    check_alien_hit_ship, check_bullet_hit, check_invasion, check_level_clear, fire,
-    fire_alien_bullet, move_ship, pause_game, quit_game, reset_game, step_alien_bullets,
-    step_bullet, step_grid, tick_explosions, tick_game_over, tick_level_clear, AlienKind,
-    ClassicSpeed, CrispMovement, Direction, GamePhase, GameState, CELL_H, CELL_W, GAME_OVER_PAUSE,
-    GRID_COLS, GRID_W, PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
+    check_alien_hit_ship, check_bullet_hit, check_invasion, check_level_clear, check_ufo_hit,
+    fire, fire_alien_bullet, move_ship, pause_game, quit_game, reset_game, step_alien_bullets,
+    step_bullet, step_grid, tick_explosions, tick_game_over, tick_level_clear, tick_ufo,
+    try_spawn_ufo, AlienKind, ClassicSpeed, CrispMovement, Direction, GamePhase, GameState,
+    CELL_H, CELL_W, GAME_OVER_PAUSE, GRID_COLS, GRID_W, PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
+    UFO_H, UFO_SCORES, UFO_W,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use js_sys::Math;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement, KeyboardEvent};
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -75,10 +77,10 @@ pub fn start() {
     let sprites: Rc<RefCell<HashMap<&'static str, HtmlImageElement>>> =
         Rc::new(RefCell::new(HashMap::new()));
     let loaded = Rc::new(RefCell::new(0u32));
-    const TOTAL: u32 = 10;
+    const TOTAL: u32 = 11;
 
     for name in ["crab", "crab_f2", "squid", "squid_f2", "octopus", "octopus_f2", "ship",
-                 "crab_exp", "squid_exp", "octopus_exp"] {
+                 "crab_exp", "squid_exp", "octopus_exp", "ufo"] {
         let img = HtmlImageElement::new().expect("failed to create image");
         img.set_src(&format!("assets/{name}.png"));
 
@@ -188,8 +190,14 @@ fn start_loop(
                 }
                 if held.contains_key(" ") {
                     fire(&mut s);
+                    // Try to spawn UFO with a randomly chosen direction
+                    let direction = if Math::random() < 0.5 { 1i8 } else { -1i8 };
+                    try_spawn_ufo(&mut s, direction, viewport_w, grid_top);
                 }
                 step_bullet(&mut s, grid_top);
+                // Check UFO hit before advancing bullet further
+                let ufo_score = UFO_SCORES[(Math::random() * UFO_SCORES.len() as f64) as usize];
+                check_ufo_hit(&mut s, ufo_score);
                 // Collision: compute current grid canvas origin from live offsets
                 let cur_grid_left = base_grid_left + s.grid.offset_x;
                 let cur_grid_top  = grid_top + s.grid.offset_y;
@@ -220,6 +228,7 @@ fn start_loop(
             tick_level_clear(&mut s);
             tick_game_over(&mut s);
             tick_explosions(&mut s);
+            tick_ufo(&mut s, viewport_w);
         }
 
         // ── Draw ──────────────────────────────────────────────────────────────
@@ -301,6 +310,25 @@ fn draw_scene(
     ctx.set_fill_style_str("#ff4444");
     for ab in &state.alien_bullets {
         ctx.fill_rect(ab.x - 1.5, ab.y, 3.0, 12.0);
+    }
+
+    // UFO — sprite while alive; score text while exploding
+    if let Some(ref ufo) = state.ufo {
+        if ufo.explosion_timer > 0 {
+            // Flash the score value at the hit position
+            ctx.set_fill_style_str("#ff4444");
+            ctx.set_text_align("center");
+            ctx.set_font("bold 20px monospace");
+            ctx.fill_text(
+                &ufo.score.to_string(),
+                ufo.x + UFO_W / 2.0,
+                ufo.y + UFO_H / 2.0 + 7.0,
+            ).expect("fill_text failed");
+        } else if let Some(img) = sprites.get("ufo") {
+            ctx.draw_image_with_html_image_element_and_dw_and_dh(
+                img, ufo.x, ufo.y, UFO_W, UFO_H,
+            ).expect("failed to draw ufo");
+        }
     }
 
     // Attract screen

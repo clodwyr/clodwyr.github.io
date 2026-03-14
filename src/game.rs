@@ -29,6 +29,14 @@ pub struct AlienBullet {
     pub y: f64,
 }
 
+pub struct Ufo {
+    pub x: f64,
+    pub y: f64,              // canvas Y, set at spawn time from the caller (= grid_top in-game)
+    pub direction: i8,       // +1 = L→R, -1 = R→L
+    pub explosion_timer: u8, // counts down after being hit; 0 = alive/gone
+    pub score: u32,          // score value to display while exploding
+}
+
 /// Tracks the alien grid's position and movement direction.
 /// `offset_x` is the signed shift from the grid's centred position;
 /// `offset_y` accumulates the downward drops on wall reversals.
@@ -68,6 +76,12 @@ pub struct GameState {
     pub pause_timer: u32,
     /// Counts frames spent in the GameOver phase — prompt is shown after GAME_OVER_PAUSE.
     pub game_over_timer: u32,
+    /// The mystery UFO when it is in flight; None otherwise.
+    pub ufo: Option<Ufo>,
+    /// How many shots the player has fired since the last UFO spawned (or game start).
+    pub ufo_shot_counter: u32,
+    /// Shot count threshold before the next UFO appears.
+    pub ufo_shots_to_next: u32,
 }
 
 impl GameState {
@@ -86,6 +100,9 @@ impl GameState {
             phase: GamePhase::Attract,
             pause_timer: 0,
             game_over_timer: 0,
+            ufo: None,
+            ufo_shot_counter: 0,
+            ufo_shots_to_next: UFO_FIRST_SHOT,
         }
     }
 }
@@ -145,6 +162,25 @@ pub const SHIP_HALF_H: f64 = 10.0;
 pub const ALIEN_BULLET_STEP: f64 = 4.0;
 /// Maximum number of alien bullets that can be in flight simultaneously — easy to tune.
 pub const MAX_ALIEN_BULLETS: usize = 3;
+
+// ── UFO constants ─────────────────────────────────────────────────────────────
+
+/// Pixels the UFO moves per frame — easy to tune.
+pub const UFO_STEP: f64 = 2.0;
+/// Default UFO Y used in tests (matches grid_top for a 600px-tall canvas).
+pub const UFO_Y: f64 = 90.0;
+/// UFO sprite width in pixels (16 source pixels × scale 5).
+pub const UFO_W: f64 = 80.0;
+/// UFO sprite height in pixels (7 source pixels × scale 5).
+pub const UFO_H: f64 = 35.0;
+/// Player shots before the first UFO appears (classic: 23).
+pub const UFO_FIRST_SHOT: u32 = 23;
+/// Player shots between subsequent UFO appearances (classic: 15).
+pub const UFO_REPEAT_SHOTS: u32 = 15;
+/// Frames the score value is displayed at the UFO position after a hit.
+pub const UFO_EXPLOSION_FRAMES: u8 = 60;
+/// Possible score values awarded for hitting the UFO (chosen randomly by the caller).
+pub const UFO_SCORES: [u32; 4] = [50, 100, 150, 300];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Direction {
@@ -218,6 +254,7 @@ pub fn move_ship(ship: &mut Ship, direction: Direction, strategy: &dyn MovementS
 pub fn fire(state: &mut GameState) {
     if state.bullet.is_none() {
         state.bullet = Some(Bullet { x: state.ship.x, y: state.ship.y });
+        state.ufo_shot_counter += 1;
     }
 }
 
@@ -370,6 +407,72 @@ pub fn reset_game(state: &mut GameState) {
     state.game_over_timer = 0;
     state.ship.x = state.width as f64 / 2.0;
     state.phase = GamePhase::Playing;
+    state.ufo = None;
+    state.ufo_shot_counter = 0;
+    state.ufo_shots_to_next = UFO_FIRST_SHOT;
+}
+
+// ── UFO ───────────────────────────────────────────────────────────────────────
+
+/// Spawn the mystery UFO if the shot-count threshold has been reached and no UFO is
+/// currently active.  `direction` is +1 for L→R or -1 for R→L (chosen by the caller
+/// so that game.rs stays free of randomness).  `canvas_w` is needed to position the
+/// UFO just off the appropriate edge.
+/// `ufo_y` is the canvas Y the UFO should fly at — callers pass `grid_top` so the UFO
+/// is reachable by the player's bullet (which is cleared at `grid_top`).
+pub fn try_spawn_ufo(state: &mut GameState, direction: i8, canvas_w: f64, ufo_y: f64) {
+    if state.ufo.is_some() { return; }
+    if state.ufo_shot_counter < state.ufo_shots_to_next { return; }
+
+    let x = if direction == 1 { -UFO_W } else { canvas_w };
+    state.ufo = Some(Ufo { x, y: ufo_y, direction, explosion_timer: 0, score: 0 });
+    state.ufo_shot_counter = 0;
+    state.ufo_shots_to_next = UFO_REPEAT_SHOTS;
+}
+
+/// Advance the UFO each frame: move it if alive, tick down explosion timer if hit.
+/// Removes the UFO once it exits the canvas or its explosion timer reaches zero.
+pub fn tick_ufo(state: &mut GameState, canvas_w: f64) {
+    if state.phase == GamePhase::Paused { return; }
+    let done = match state.ufo {
+        None => return,
+        Some(ref mut u) => {
+            if u.explosion_timer > 0 {
+                u.explosion_timer -= 1;
+                u.explosion_timer == 0
+            } else {
+                u.x += UFO_STEP * u.direction as f64;
+                // Exited right edge or left edge?
+                u.x >= canvas_w || u.x + UFO_W <= 0.0
+            }
+        }
+    };
+    if done { state.ufo = None; }
+}
+
+/// Check whether the player bullet has hit the UFO.
+/// `score` is the bonus to award (caller picks randomly from `UFO_SCORES`).
+/// On a hit: awards score, stores it on the UFO for display, starts explosion timer,
+/// and clears the player bullet.  Does nothing if the UFO is absent or already exploding.
+pub fn check_ufo_hit(state: &mut GameState, score: u32) {
+    let (bx, by) = match state.bullet {
+        Some(ref b) => (b.x, b.y),
+        None => return,
+    };
+    let hit = match state.ufo {
+        Some(ref u) if u.explosion_timer == 0 => {
+            bx >= u.x && bx <= u.x + UFO_W && by >= u.y && by <= u.y + UFO_H
+        }
+        _ => false,
+    };
+    if hit {
+        state.score += score;
+        state.bullet = None;
+        if let Some(ref mut u) = state.ufo {
+            u.explosion_timer = UFO_EXPLOSION_FRAMES;
+            u.score = score;
+        }
+    }
 }
 
 /// Frames the "LEVEL CLEAR" screen is shown before loading the next level — easy to tune.
@@ -1340,6 +1443,228 @@ mod tests {
     #[test]
     fn ship_bullet_step_is_faster_than_alien_bullet_step() {
         assert!(BULLET_STEP > ALIEN_BULLET_STEP);
+    }
+
+    // ── UFO tests ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn ufo_shot_counter_starts_at_zero() {
+        assert_eq!(GameState::new(800, 600).ufo_shot_counter, 0);
+    }
+
+    #[test]
+    fn ufo_shots_to_next_starts_at_first_shot_value() {
+        assert_eq!(GameState::new(800, 600).ufo_shots_to_next, UFO_FIRST_SHOT);
+    }
+
+    #[test]
+    fn ufo_starts_absent() {
+        assert!(GameState::new(800, 600).ufo.is_none());
+    }
+
+    #[test]
+    fn fire_increments_ufo_shot_counter() {
+        let mut state = GameState::new(800, 600);
+        fire(&mut state);
+        assert_eq!(state.ufo_shot_counter, 1);
+    }
+
+    #[test]
+    fn fire_does_not_increment_counter_when_bullet_in_flight() {
+        let mut state = GameState::new(800, 600);
+        fire(&mut state); // fires bullet, counter = 1
+        fire(&mut state); // bullet already in flight, should not increment
+        assert_eq!(state.ufo_shot_counter, 1);
+    }
+
+    #[test]
+    fn try_spawn_ufo_does_nothing_below_threshold() {
+        let mut state = GameState::new(800, 600);
+        state.ufo_shot_counter = UFO_FIRST_SHOT - 1;
+        try_spawn_ufo(&mut state, 1, 800.0, UFO_Y);
+        assert!(state.ufo.is_none());
+    }
+
+    #[test]
+    fn try_spawn_ufo_spawns_at_threshold() {
+        let mut state = GameState::new(800, 600);
+        state.ufo_shot_counter = UFO_FIRST_SHOT;
+        try_spawn_ufo(&mut state, 1, 800.0, UFO_Y);
+        assert!(state.ufo.is_some());
+    }
+
+    #[test]
+    fn try_spawn_ufo_ltr_starts_left_of_canvas() {
+        let mut state = GameState::new(800, 600);
+        state.ufo_shot_counter = UFO_FIRST_SHOT;
+        try_spawn_ufo(&mut state, 1, 800.0, UFO_Y);
+        assert!(state.ufo.as_ref().unwrap().x < 0.0);
+    }
+
+    #[test]
+    fn try_spawn_ufo_rtl_starts_right_of_canvas() {
+        let mut state = GameState::new(800, 600);
+        state.ufo_shot_counter = UFO_FIRST_SHOT;
+        try_spawn_ufo(&mut state, -1, 800.0, UFO_Y);
+        assert!(state.ufo.as_ref().unwrap().x >= 800.0);
+    }
+
+    #[test]
+    fn try_spawn_ufo_resets_counter_and_sets_repeat_threshold() {
+        let mut state = GameState::new(800, 600);
+        state.ufo_shot_counter = UFO_FIRST_SHOT;
+        try_spawn_ufo(&mut state, 1, 800.0, UFO_Y);
+        assert_eq!(state.ufo_shot_counter, 0);
+        assert_eq!(state.ufo_shots_to_next, UFO_REPEAT_SHOTS);
+    }
+
+    #[test]
+    fn try_spawn_ufo_does_nothing_when_ufo_already_active() {
+        let mut state = GameState::new(800, 600);
+        state.ufo_shot_counter = UFO_FIRST_SHOT;
+        try_spawn_ufo(&mut state, 1, 800.0, UFO_Y);
+        state.ufo_shot_counter = UFO_REPEAT_SHOTS;
+        try_spawn_ufo(&mut state, 1, 800.0, UFO_Y); // second attempt — UFO still in flight
+        // Counter should not have been reset a second time
+        assert_eq!(state.ufo_shot_counter, UFO_REPEAT_SHOTS);
+    }
+
+    #[test]
+    fn tick_ufo_moves_ltr() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        tick_ufo(&mut state, 800.0);
+        assert!(state.ufo.as_ref().unwrap().x > 100.0);
+    }
+
+    #[test]
+    fn tick_ufo_moves_rtl() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: -1, explosion_timer: 0, score: 0 });
+        tick_ufo(&mut state, 800.0);
+        assert!(state.ufo.as_ref().unwrap().x < 100.0);
+    }
+
+    #[test]
+    fn tick_ufo_clears_when_exits_right() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 800.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        tick_ufo(&mut state, 800.0);
+        assert!(state.ufo.is_none());
+    }
+
+    #[test]
+    fn tick_ufo_clears_when_exits_left() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: -UFO_W, y: UFO_Y, direction: -1, explosion_timer: 0, score: 0 });
+        tick_ufo(&mut state, 800.0);
+        assert!(state.ufo.is_none());
+    }
+
+    #[test]
+    fn tick_ufo_does_nothing_when_absent() {
+        let mut state = GameState::new(800, 600);
+        tick_ufo(&mut state, 800.0); // should not panic
+    }
+
+    #[test]
+    fn tick_ufo_decrements_explosion_timer() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: 1, explosion_timer: 10, score: 100 });
+        tick_ufo(&mut state, 800.0);
+        assert_eq!(state.ufo.as_ref().unwrap().explosion_timer, 9);
+    }
+
+    #[test]
+    fn tick_ufo_clears_after_explosion_expires() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: 1, explosion_timer: 1, score: 100 });
+        tick_ufo(&mut state, 800.0);
+        assert!(state.ufo.is_none());
+    }
+
+    #[test]
+    fn tick_ufo_does_not_move_when_paused() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Paused;
+        state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        tick_ufo(&mut state, 800.0);
+        assert_eq!(state.ufo.as_ref().unwrap().x, 100.0);
+    }
+
+    #[test]
+    fn check_ufo_hit_awards_score() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 0.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        state.bullet = Some(Bullet { x: UFO_W / 2.0, y: UFO_Y });
+        check_ufo_hit(&mut state, 150);
+        assert_eq!(state.score, 150);
+    }
+
+    #[test]
+    fn check_ufo_hit_clears_bullet() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 0.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        state.bullet = Some(Bullet { x: UFO_W / 2.0, y: UFO_Y });
+        check_ufo_hit(&mut state, 150);
+        assert!(state.bullet.is_none());
+    }
+
+    #[test]
+    fn check_ufo_hit_starts_explosion_timer() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 0.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        state.bullet = Some(Bullet { x: UFO_W / 2.0, y: UFO_Y });
+        check_ufo_hit(&mut state, 150);
+        assert!(state.ufo.as_ref().unwrap().explosion_timer > 0);
+    }
+
+    #[test]
+    fn check_ufo_hit_stores_score_for_display() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 0.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        state.bullet = Some(Bullet { x: UFO_W / 2.0, y: UFO_Y });
+        check_ufo_hit(&mut state, 300);
+        assert_eq!(state.ufo.as_ref().unwrap().score, 300);
+    }
+
+    #[test]
+    fn check_ufo_hit_does_nothing_when_no_ufo() {
+        let mut state = GameState::new(800, 600);
+        state.bullet = Some(Bullet { x: 50.0, y: UFO_Y });
+        check_ufo_hit(&mut state, 100);
+        assert_eq!(state.score, 0);
+    }
+
+    #[test]
+    fn check_ufo_hit_does_nothing_when_already_exploding() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 0.0, y: UFO_Y, direction: 1, explosion_timer: 10, score: 100 });
+        state.bullet = Some(Bullet { x: UFO_W / 2.0, y: UFO_Y });
+        check_ufo_hit(&mut state, 200);
+        assert_eq!(state.score, 0); // already exploding, no extra score
+    }
+
+    #[test]
+    fn check_ufo_hit_misses_when_bullet_off_ufo() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 0.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        state.bullet = Some(Bullet { x: -100.0, y: UFO_Y });
+        check_ufo_hit(&mut state, 100);
+        assert_eq!(state.score, 0);
+        assert!(state.bullet.is_some());
+    }
+
+    #[test]
+    fn reset_game_clears_ufo_state() {
+        let mut state = GameState::new(800, 600);
+        state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        state.ufo_shot_counter = 10;
+        state.ufo_shots_to_next = UFO_REPEAT_SHOTS;
+        reset_game(&mut state);
+        assert!(state.ufo.is_none());
+        assert_eq!(state.ufo_shot_counter, 0);
+        assert_eq!(state.ufo_shots_to_next, UFO_FIRST_SHOT);
     }
 }
 

@@ -355,6 +355,7 @@ name = "space-invaders"
 version = "0.1.0"
 dependencies = [
  "image",
+ "js-sys",
  "wasm-bindgen",
  "wasm-bindgen-test",
  "web-sys",
