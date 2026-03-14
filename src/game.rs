@@ -216,6 +216,50 @@ pub fn step_bullet(state: &mut GameState, boundary_top: f64) {
     }
 }
 
+/// Fire an alien bullet from the lowest alive alien in `col`.
+/// `grid_left` / `grid_top` are the canvas coordinates of the grid's top-left corner.
+/// Does nothing if a bullet is already in flight or no alive alien occupies that column.
+pub fn fire_alien_bullet(state: &mut GameState, col: u32, grid_left: f64, grid_top: f64) {
+    if state.alien_bullet.is_some() { return; }
+    // Find the highest row number (= lowest on screen) that is alive in this column
+    let lowest = state.aliens.iter()
+        .filter(|a| a.alive && a.col == col)
+        .max_by_key(|a| a.row);
+    if let Some(alien) = lowest {
+        let x = grid_left + alien.col as f64 * CELL_W + CELL_W / 2.0;
+        let y = grid_top  + alien.row as f64 * CELL_H + CELL_H;
+        state.alien_bullet = Some(AlienBullet { x, y });
+    }
+}
+
+/// Advance the alien bullet downward by ALIEN_BULLET_STEP.
+/// Clears it if it has moved past `canvas_h`.
+pub fn step_alien_bullet(state: &mut GameState, canvas_h: f64) {
+    if let Some(ref mut ab) = state.alien_bullet {
+        ab.y += ALIEN_BULLET_STEP;
+    }
+    if state.alien_bullet.as_ref().map_or(false, |ab| ab.y > canvas_h) {
+        state.alien_bullet = None;
+    }
+}
+
+/// Check whether the alien bullet overlaps the ship.
+/// On a hit: `lives` is decremented and the alien bullet is cleared.
+pub fn check_alien_hit_ship(state: &mut GameState) {
+    let (abx, aby) = match state.alien_bullet {
+        Some(ref ab) => (ab.x, ab.y),
+        None => return,
+    };
+    let sx = state.ship.x;
+    let sy = state.ship.y;
+    if abx >= sx - SHIP_HALF_W && abx <= sx + SHIP_HALF_W
+        && aby >= sy - SHIP_HALF_H && aby <= sy + SHIP_HALF_H
+    {
+        state.lives = state.lives.saturating_sub(1);
+        state.alien_bullet = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
