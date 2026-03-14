@@ -1130,6 +1130,53 @@ mod tests {
         tick_game_over(&mut state); // should saturate, not panic
         assert_eq!(state.game_over_timer, u32::MAX);
     }
+
+    // ── Explosion animation tests ─────────────────────────────────────────────
+
+    #[test]
+    fn bullet_hit_starts_explosion_timer() {
+        let mut state = state_with_bullet_at_alien(0, 0);
+        check_bullet_hit(&mut state, 0.0, 0.0);
+        let hit = state.aliens.iter().find(|a| a.col == 0 && a.row == 0).unwrap();
+        assert!(hit.explosion_timer > 0);
+    }
+
+    #[test]
+    fn alien_starts_with_no_explosion() {
+        let state = GameState::new(800, 600);
+        let aliens = build_alien_grid(LEVEL_1);
+        assert!(aliens.iter().all(|a| a.explosion_timer == 0));
+    }
+
+    #[test]
+    fn tick_explosions_decrements_timer() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        state.aliens[0].alive = false;
+        state.aliens[0].explosion_timer = 10;
+        tick_explosions(&mut state);
+        assert_eq!(state.aliens[0].explosion_timer, 9);
+    }
+
+    #[test]
+    fn tick_explosions_does_not_decrement_alive_aliens() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        state.aliens[0].explosion_timer = 10; // alive alien — timer should not change
+        tick_explosions(&mut state);
+        assert_eq!(state.aliens[0].explosion_timer, 10);
+    }
+
+    #[test]
+    fn all_aliens_dead_ignores_exploding_aliens() {
+        // An alien with explosion_timer > 0 is dead but still "visible" — should
+        // not count as alive for level-clear purposes.
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        for a in &mut state.aliens { a.alive = false; }
+        state.aliens[0].explosion_timer = 5;
+        assert!(all_aliens_dead(&state));
+    }
 }
 
 /// Level grid pattern: 5 rows × 11 columns.

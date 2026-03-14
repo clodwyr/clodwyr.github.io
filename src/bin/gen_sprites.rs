@@ -78,6 +78,45 @@ const OCTOPUS: &[&str] = &[
     "##........##",
 ];
 
+// ── Explosions ───────────────────────────────────────────────────────────────
+// Same dimensions / scale as their parent alien so they fit in the same cell.
+
+// 16×8 sprite — scale=4 (matches crab)
+const CRAB_EXP: &[&str] = &[
+    ".....#....#.....",
+    "#...........#...",
+    "..#..#..#..#....",
+    "....#.....#.....",
+    "....#.....#.....",
+    "..#..#..#..#....",
+    "#...........#...",
+    ".....#....#.....",
+];
+
+// 10×8 sprite — scale=5 (matches squid)
+const SQUID_EXP: &[&str] = &[
+    "..#...#...",
+    "#.......#.",
+    "...#.#....",
+    "...###....",
+    "...###....",
+    "...#.#....",
+    "#.......#.",
+    "..#...#...",
+];
+
+// 12×8 sprite — scale=5 (matches octopus)
+const OCTOPUS_EXP: &[&str] = &[
+    "..#.....#...",
+    "#...#.#...#.",
+    "....#.#.....",
+    "...#...#....",
+    "...#...#....",
+    "....#.#.....",
+    "#...#.#...#.",
+    "..#.....#...",
+];
+
 // 16×6 sprite — scale=5 → 80×30px
 const UFO: &[&str] = &[
     "....########....",
@@ -139,4 +178,7 @@ fn main() {
     save_sprite("octopus_f2",  5, GREEN, OCTOPUS_FRAME_2);
     save_sprite("ufo",         5, GREEN, UFO);
     save_sprite("ship",        5, GREEN, SHIP);
+    save_sprite("crab_exp",    4, WHITE, CRAB_EXP);
+    save_sprite("squid_exp",   5, WHITE, SQUID_EXP);
+    save_sprite("octopus_exp", 5, WHITE, OCTOPUS_EXP);
 }
