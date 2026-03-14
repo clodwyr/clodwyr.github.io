@@ -169,6 +169,10 @@ fn start_loop(
                     *fc += 1;
                     *fc
                 };
+                // Check hit against current bullet position BEFORE stepping,
+                // so the bullet can't be cleared past the floor before the
+                // collision is tested.
+                check_alien_hit_ship(&mut s);
                 // Bullet clears when it passes below the ship, not the canvas bottom
                 let bullet_floor = s.ship.y + SHIP_HALF_H;
                 if f % ALIEN_FIRE_INTERVAL == 0 {
@@ -178,7 +182,6 @@ fn start_loop(
                 } else {
                     step_alien_bullet(&mut s, bullet_floor);
                 }
-                check_alien_hit_ship(&mut s);
                 check_invasion(&mut s, grid_top);
 
                 // Level clear — advance when all aliens are dead
