@@ -887,6 +887,36 @@ mod tests {
         assert_ne!(state.phase, GamePhase::GameOver);
     }
 
+    #[test]
+    fn check_invasion_does_not_trigger_when_only_top_row_alive_and_grid_not_descended() {
+        // Bug: if only row 0 (top row) is alive but offset_y = ship.y - GRID_H,
+        // the old code (which uses GRID_H) triggers game over even though row 0's
+        // bottom edge is still far above the ship.
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        // Kill all aliens except row 0
+        for a in &mut state.aliens { if a.row != 0 { a.alive = false; } }
+        // offset_y positions the full grid so its BOTTOM would be at ship.y
+        // — but only row 0 is alive, so the lowest surviving alien is at y=CELL_H, not GRID_H.
+        state.grid.offset_y = state.ship.y - GRID_H;
+        state.phase = GamePhase::Playing;
+        check_invasion(&mut state, 0.0);
+        assert_ne!(state.phase, GamePhase::GameOver);
+    }
+
+    #[test]
+    fn check_invasion_triggers_when_lowest_alive_row_reaches_ship() {
+        // Only row 0 alive; position it so row 0's bottom just touches ship.y.
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        for a in &mut state.aliens { if a.row != 0 { a.alive = false; } }
+        // Row 0 bottom = grid_top + offset_y + CELL_H.  Set offset_y so this = ship.y.
+        state.grid.offset_y = state.ship.y - CELL_H; // grid_top = 0.0 in test
+        state.phase = GamePhase::Playing;
+        check_invasion(&mut state, 0.0);
+        assert_eq!(state.phase, GamePhase::GameOver);
+    }
+
     // ── Level tests ───────────────────────────────────────────────────────────
 
     #[test]
