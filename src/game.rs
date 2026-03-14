@@ -46,6 +46,7 @@ pub struct GridMotion {
 pub enum GamePhase {
     Attract,
     Playing,
+    Paused,
     LevelClear,
     GameOver,
 }
@@ -56,7 +57,7 @@ pub struct GameState {
     pub aliens: Vec<Alien>,
     pub ship: Ship,
     pub bullet: Option<Bullet>,
-    pub alien_bullet: Option<AlienBullet>,
+    pub alien_bullets: Vec<AlienBullet>,
     pub grid: GridMotion,
     pub score: u32,
     pub lives: u32,
@@ -77,7 +78,7 @@ impl GameState {
             aliens: Vec::new(),
             ship: Ship { x: width as f64 / 2.0, y: height as f64 - 40.0 },
             bullet: None,
-            alien_bullet: None,
+            alien_bullets: Vec::new(),
             grid: GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0, anim_frame: false },
             score: 0,
             lives: 3,
@@ -131,7 +132,7 @@ pub struct ClassicSpeed {
 pub const SHIP_STEP: f64 = 4.0;
 
 /// How many pixels the bullet travels upward per frame — easy to tune.
-pub const BULLET_STEP: f64 = 8.0;
+pub const BULLET_STEP: f64 = 14.0;
 
 /// Half the ship sprite width, used for boundary clamping.
 /// Ship sprite is 55px wide drawn at natural size; half = 27.5.
@@ -142,6 +143,8 @@ pub const SHIP_HALF_H: f64 = 10.0;
 
 /// How many pixels the alien bullet travels downward per frame — easy to tune.
 pub const ALIEN_BULLET_STEP: f64 = 4.0;
+/// Maximum number of alien bullets that can be in flight simultaneously — easy to tune.
+pub const MAX_ALIEN_BULLETS: usize = 3;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Direction {
@@ -269,9 +272,9 @@ pub fn step_bullet(state: &mut GameState, boundary_top: f64) {
 
 /// Fire an alien bullet from the lowest alive alien in `col`.
 /// `grid_left` / `grid_top` are the canvas coordinates of the grid's top-left corner.
-/// Does nothing if a bullet is already in flight or no alive alien occupies that column.
+/// Does nothing if MAX_ALIEN_BULLETS are already in flight or no alive alien occupies that column.
 pub fn fire_alien_bullet(state: &mut GameState, col: u32, grid_left: f64, grid_top: f64) {
-    if state.alien_bullet.is_some() { return; }
+    if state.alien_bullets.len() >= MAX_ALIEN_BULLETS { return; }
     // Find the highest row number (= lowest on screen) that is alive in this column
     let lowest = state.aliens.iter()
         .filter(|a| a.alive && a.col == col)
@@ -279,35 +282,32 @@ pub fn fire_alien_bullet(state: &mut GameState, col: u32, grid_left: f64, grid_t
     if let Some(alien) = lowest {
         let x = grid_left + alien.col as f64 * CELL_W + CELL_W / 2.0;
         let y = grid_top  + alien.row as f64 * CELL_H + CELL_H;
-        state.alien_bullet = Some(AlienBullet { x, y });
+        state.alien_bullets.push(AlienBullet { x, y });
     }
 }
 
-/// Advance the alien bullet downward by ALIEN_BULLET_STEP.
-/// Clears it if it has moved past `canvas_h`.
-pub fn step_alien_bullet(state: &mut GameState, canvas_h: f64) {
-    if let Some(ref mut ab) = state.alien_bullet {
+/// Advance all alien bullets downward by ALIEN_BULLET_STEP.
+/// Removes any that have moved past `canvas_h`.
+pub fn step_alien_bullets(state: &mut GameState, canvas_h: f64) {
+    for ab in &mut state.alien_bullets {
         ab.y += ALIEN_BULLET_STEP;
     }
-    if state.alien_bullet.as_ref().map_or(false, |ab| ab.y > canvas_h) {
-        state.alien_bullet = None;
-    }
+    state.alien_bullets.retain(|ab| ab.y <= canvas_h);
 }
 
-/// Check whether the alien bullet overlaps the ship.
-/// On a hit: `lives` is decremented and the alien bullet is cleared.
+/// Check whether any alien bullet overlaps the ship.
+/// On a hit: `lives` is decremented and the hitting bullet is removed.
+/// Only one hit is processed per call (one impact per frame).
 pub fn check_alien_hit_ship(state: &mut GameState) {
-    let (abx, aby) = match state.alien_bullet {
-        Some(ref ab) => (ab.x, ab.y),
-        None => return,
-    };
     let sx = state.ship.x;
     let sy = state.ship.y;
-    if abx >= sx - SHIP_HALF_W && abx <= sx + SHIP_HALF_W
-        && aby >= sy - SHIP_HALF_H && aby <= sy + SHIP_HALF_H
-    {
+    let hit_idx = state.alien_bullets.iter().position(|ab| {
+        ab.x >= sx - SHIP_HALF_W && ab.x <= sx + SHIP_HALF_W
+            && ab.y >= sy - SHIP_HALF_H && ab.y <= sy + SHIP_HALF_H
+    });
+    if let Some(idx) = hit_idx {
+        state.alien_bullets.remove(idx);
         state.lives = state.lives.saturating_sub(1);
-        state.alien_bullet = None;
         if state.lives == 0 {
             state.phase = GamePhase::GameOver;
         }
@@ -329,6 +329,23 @@ pub fn check_invasion(state: &mut GameState, grid_top: f64) {
     }
 }
 
+/// Toggle pause: Playing → Paused or Paused → Playing.
+/// Ignored in all other phases.
+pub fn pause_game(state: &mut GameState) {
+    match state.phase {
+        GamePhase::Playing => state.phase = GamePhase::Paused,
+        GamePhase::Paused  => state.phase = GamePhase::Playing,
+        _ => {}
+    }
+}
+
+/// Quit the current game and return to the attract screen.
+/// Resets all state (score, lives, level) without starting a new game.
+pub fn quit_game(state: &mut GameState) {
+    reset_game(state);
+    state.phase = GamePhase::Attract;
+}
+
 /// Frames the "GAME OVER" message is shown before the restart prompt appears — easy to tune.
 pub const GAME_OVER_PAUSE: u32 = 120; // ~2 s at 60 fps
 
@@ -348,7 +365,7 @@ pub fn reset_game(state: &mut GameState) {
     state.aliens = build_alien_grid(LEVELS[0]);
     state.grid = GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0, anim_frame: false };
     state.bullet = None;
-    state.alien_bullet = None;
+    state.alien_bullets.clear();
     state.pause_timer = 0;
     state.game_over_timer = 0;
     state.ship.x = state.width as f64 / 2.0;
@@ -743,7 +760,7 @@ mod tests {
         let mut state = GameState::new(800, 600);
         state.aliens = build_alien_grid(LEVEL_1);
         fire_alien_bullet(&mut state, 0, 0.0, 0.0);
-        let ab = state.alien_bullet.as_ref().expect("alien bullet should exist");
+        let ab = state.alien_bullets.last().expect("alien bullet should exist");
         // Expected x: centre of col 0 cell
         assert_eq!(ab.x, CELL_W / 2.0);
         // Expected y: bottom of row 4 cell (spawn at bottom edge)
@@ -751,13 +768,16 @@ mod tests {
     }
 
     #[test]
-    fn fire_alien_bullet_does_nothing_if_already_in_flight() {
+    fn fire_alien_bullet_does_not_exceed_max_when_full() {
+        // Fill to MAX_ALIEN_BULLETS then try one more — count must not increase.
         let mut state = GameState::new(800, 600);
         state.aliens = build_alien_grid(LEVEL_1);
-        fire_alien_bullet(&mut state, 0, 0.0, 0.0);
-        let first_x = state.alien_bullet.as_ref().unwrap().x;
-        fire_alien_bullet(&mut state, 5, 0.0, 0.0); // different col
-        assert_eq!(state.alien_bullet.as_ref().unwrap().x, first_x);
+        for _ in 0..MAX_ALIEN_BULLETS {
+            fire_alien_bullet(&mut state, 0, 0.0, 0.0);
+        }
+        assert_eq!(state.alien_bullets.len(), MAX_ALIEN_BULLETS);
+        fire_alien_bullet(&mut state, 5, 0.0, 0.0);
+        assert_eq!(state.alien_bullets.len(), MAX_ALIEN_BULLETS);
     }
 
     #[test]
@@ -771,7 +791,7 @@ mod tests {
             }
         }
         fire_alien_bullet(&mut state, 3, 0.0, 0.0);
-        let ab = state.alien_bullet.as_ref().expect("should fire from row 2");
+        let ab = state.alien_bullets.last().expect("should fire from row 2");
         // Row 2 is now the lowest alive in col 3
         assert_eq!(ab.y, 2.0 * CELL_H + CELL_H);
     }
@@ -784,30 +804,29 @@ mod tests {
             if a.col == 2 { a.alive = false; }
         }
         fire_alien_bullet(&mut state, 2, 0.0, 0.0);
-        assert!(state.alien_bullet.is_none());
+        assert!(state.alien_bullets.is_empty());
     }
 
     #[test]
-    fn step_alien_bullet_moves_downward() {
+    fn step_alien_bullets_moves_downward() {
         let mut state = GameState::new(800, 600);
-        state.alien_bullet = Some(AlienBullet { x: 100.0, y: 200.0 });
-        step_alien_bullet(&mut state, 600.0);
-        assert_eq!(state.alien_bullet.as_ref().unwrap().y, 200.0 + ALIEN_BULLET_STEP);
+        state.alien_bullets.push(AlienBullet { x: 100.0, y: 200.0 });
+        step_alien_bullets(&mut state, 600.0);
+        assert_eq!(state.alien_bullets[0].y, 200.0 + ALIEN_BULLET_STEP);
     }
 
     #[test]
-    fn step_alien_bullet_clears_when_below_canvas() {
+    fn step_alien_bullets_clears_when_below_canvas() {
         let mut state = GameState::new(800, 600);
-        state.alien_bullet = Some(AlienBullet { x: 100.0, y: 598.0 });
-        step_alien_bullet(&mut state, 600.0);
-        assert!(state.alien_bullet.is_none());
+        state.alien_bullets.push(AlienBullet { x: 100.0, y: 598.0 });
+        step_alien_bullets(&mut state, 600.0);
+        assert!(state.alien_bullets.is_empty());
     }
 
     #[test]
     fn check_alien_hit_ship_decrements_lives_on_overlap() {
         let mut state = GameState::new(800, 600);
-        // Place alien bullet exactly on ship centre
-        state.alien_bullet = Some(AlienBullet { x: state.ship.x, y: state.ship.y });
+        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y });
         check_alien_hit_ship(&mut state);
         assert_eq!(state.lives, 2);
     }
@@ -815,19 +834,18 @@ mod tests {
     #[test]
     fn check_alien_hit_ship_clears_alien_bullet_on_hit() {
         let mut state = GameState::new(800, 600);
-        state.alien_bullet = Some(AlienBullet { x: state.ship.x, y: state.ship.y });
+        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y });
         check_alien_hit_ship(&mut state);
-        assert!(state.alien_bullet.is_none());
+        assert!(state.alien_bullets.is_empty());
     }
 
     #[test]
     fn check_alien_hit_ship_does_nothing_when_bullet_misses() {
         let mut state = GameState::new(800, 600);
-        // Place bullet far from ship
-        state.alien_bullet = Some(AlienBullet { x: 0.0, y: 0.0 });
+        state.alien_bullets.push(AlienBullet { x: 0.0, y: 0.0 });
         check_alien_hit_ship(&mut state);
         assert_eq!(state.lives, 3);
-        assert!(state.alien_bullet.is_some());
+        assert_eq!(state.alien_bullets.len(), 1);
     }
 
     #[test]
@@ -841,7 +859,7 @@ mod tests {
     fn check_alien_hit_ship_sets_game_over_when_last_life_lost() {
         let mut state = GameState::new(800, 600);
         state.lives = 1;
-        state.alien_bullet = Some(AlienBullet { x: state.ship.x, y: state.ship.y });
+        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y });
         check_alien_hit_ship(&mut state);
         assert_eq!(state.lives, 0);
         assert_eq!(state.phase, GamePhase::GameOver);
@@ -852,7 +870,7 @@ mod tests {
         let mut state = GameState::new(800, 600);
         state.phase = GamePhase::Playing;
         state.lives = 2;
-        state.alien_bullet = Some(AlienBullet { x: state.ship.x, y: state.ship.y });
+        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y });
         check_alien_hit_ship(&mut state);
         assert_eq!(state.phase, GamePhase::Playing);
     }
@@ -981,10 +999,10 @@ mod tests {
     fn advance_level_clears_bullets() {
         let mut state = GameState::new(800, 600);
         state.bullet = Some(Bullet { x: 100.0, y: 100.0 });
-        state.alien_bullet = Some(AlienBullet { x: 200.0, y: 200.0 });
+        state.alien_bullets.push(AlienBullet { x: 200.0, y: 200.0 });
         advance_level(&mut state);
         assert!(state.bullet.is_none());
-        assert!(state.alien_bullet.is_none());
+        assert!(state.alien_bullets.is_empty());
     }
 
     #[test]
@@ -1124,10 +1142,10 @@ mod tests {
     fn reset_game_clears_bullets() {
         let mut state = GameState::new(800, 600);
         state.bullet = Some(Bullet { x: 100.0, y: 100.0 });
-        state.alien_bullet = Some(AlienBullet { x: 200.0, y: 200.0 });
+        state.alien_bullets.push(AlienBullet { x: 200.0, y: 200.0 });
         reset_game(&mut state);
         assert!(state.bullet.is_none());
-        assert!(state.alien_bullet.is_none());
+        assert!(state.alien_bullets.is_empty());
     }
 
     #[test]
@@ -1290,7 +1308,8 @@ mod tests {
             AlienBullet { x: 200.0, y: 80.0 },
         ];
         step_alien_bullets(&mut state, 600.0);
-        assert!(state.alien_bullets.iter().all(|b| b.y > 80.0));
+        assert_eq!(state.alien_bullets[0].y, 50.0 + ALIEN_BULLET_STEP);
+        assert_eq!(state.alien_bullets[1].y, 80.0 + ALIEN_BULLET_STEP);
     }
 
     #[test]
@@ -1371,7 +1390,7 @@ pub fn advance_level(state: &mut GameState) {
     state.aliens = build_alien_grid(LEVELS[state.level]);
     state.grid = GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0, anim_frame: false };
     state.bullet = None;
-    state.alien_bullet = None;
+    state.alien_bullets.clear();
 }
 
 pub fn build_alien_grid(pattern: LevelPattern) -> Vec<Alien> {
