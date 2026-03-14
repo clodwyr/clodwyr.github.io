@@ -63,6 +63,8 @@ pub struct GameState {
     pub phase: GamePhase,
     /// Counts frames spent in the LevelClear phase before advancing.
     pub pause_timer: u32,
+    /// Counts frames spent in the GameOver phase — prompt is shown after GAME_OVER_PAUSE.
+    pub game_over_timer: u32,
 }
 
 impl GameState {
@@ -80,6 +82,7 @@ impl GameState {
             level: 0,
             phase: GamePhase::Attract,
             pause_timer: 0,
+            game_over_timer: 0,
         }
     }
 }
@@ -320,6 +323,7 @@ pub fn reset_game(state: &mut GameState) {
     state.bullet = None;
     state.alien_bullet = None;
     state.pause_timer = 0;
+    state.game_over_timer = 0;
     state.ship.x = state.width as f64 / 2.0;
     state.phase = GamePhase::Playing;
 }
@@ -1075,6 +1079,45 @@ mod tests {
         state.ship.x = 100.0;
         reset_game(&mut state);
         assert_eq!(state.ship.x, 400.0);
+    }
+
+    #[test]
+    fn reset_game_resets_game_over_timer() {
+        let mut state = GameState::new(800, 600);
+        state.game_over_timer = 99;
+        reset_game(&mut state);
+        assert_eq!(state.game_over_timer, 0);
+    }
+
+    // ── Game-over timer tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn game_over_timer_starts_at_zero() {
+        assert_eq!(GameState::new(800, 600).game_over_timer, 0);
+    }
+
+    #[test]
+    fn tick_game_over_increments_timer_during_game_over() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::GameOver;
+        tick_game_over(&mut state);
+        assert_eq!(state.game_over_timer, 1);
+    }
+
+    #[test]
+    fn tick_game_over_does_nothing_outside_game_over() {
+        let mut state = GameState::new(800, 600);
+        tick_game_over(&mut state);
+        assert_eq!(state.game_over_timer, 0);
+    }
+
+    #[test]
+    fn tick_game_over_does_not_overflow() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::GameOver;
+        state.game_over_timer = u32::MAX;
+        tick_game_over(&mut state); // should saturate, not panic
+        assert_eq!(state.game_over_timer, u32::MAX);
     }
 }
 
