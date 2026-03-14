@@ -313,6 +313,17 @@ pub fn check_invasion(state: &mut GameState, grid_top: f64) {
     }
 }
 
+/// Frames the "GAME OVER" message is shown before the restart prompt appears — easy to tune.
+pub const GAME_OVER_PAUSE: u32 = 120; // ~2 s at 60 fps
+
+/// Advance the game-over timer while in the GameOver phase. Saturates at u32::MAX.
+/// Does nothing in any other phase.
+pub fn tick_game_over(state: &mut GameState) {
+    if state.phase == GamePhase::GameOver {
+        state.game_over_timer = state.game_over_timer.saturating_add(1);
+    }
+}
+
 /// Reset to a fresh game from any phase — used by both Attract→Playing and GameOver→Playing.
 pub fn reset_game(state: &mut GameState) {
     state.lives = 3;

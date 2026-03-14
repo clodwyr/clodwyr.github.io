@@ -3,8 +3,9 @@ pub mod game;
 use game::{
     check_alien_hit_ship, check_bullet_hit, check_invasion, check_level_clear, fire,
     fire_alien_bullet, move_ship, reset_game, step_alien_bullet, step_bullet, step_grid,
-    tick_level_clear, AlienKind, ClassicSpeed, CrispMovement, Direction, GamePhase,
-    GameState, CELL_H, CELL_W, GRID_COLS, GRID_W, PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
+    tick_game_over, tick_level_clear, AlienKind, ClassicSpeed, CrispMovement, Direction,
+    GamePhase, GameState, CELL_H, CELL_W, GAME_OVER_PAUSE, GRID_COLS, GRID_W, PLAY_MARGIN,
+    SHIP_HALF_H, SHIP_STEP,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -138,19 +139,27 @@ fn start_loop(
     const ALIEN_FIRE_INTERVAL: u32 = 90; // ~1.5 s at 60 fps — easy to tune
     let frame: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
 
+    // Track whether space was held last frame to detect a fresh press.
+    let mut space_was_held = false;
+
     *raf_cb_init.borrow_mut() = Some(Closure::wrap(Box::new(move || {
         // ── Update ────────────────────────────────────────────────────────────
         {
             let mut s = state.borrow_mut();
 
-            // Space starts/restarts from Attract or GameOver
-            {
-                let held = keys.borrow();
-                if held.contains_key(" ") {
-                    match s.phase {
-                        GamePhase::Attract | GamePhase::GameOver => reset_game(&mut s),
-                        _ => {}
+            // Detect fresh space press (rising edge only — not a held key).
+            let space_now = keys.borrow().contains_key(" ");
+            let space_just_pressed = space_now && !space_was_held;
+            space_was_held = space_now;
+
+            if space_just_pressed {
+                match s.phase {
+                    GamePhase::Attract => reset_game(&mut s),
+                    // Only allow restart once the game-over message has been visible long enough
+                    GamePhase::GameOver if s.game_over_timer >= GAME_OVER_PAUSE => {
+                        reset_game(&mut s);
                     }
+                    _ => {}
                 }
             }
 
@@ -194,8 +203,9 @@ fn start_loop(
                 check_invasion(&mut s, grid_top);
                 check_level_clear(&mut s);
             }
-            // tick_level_clear runs outside the Playing guard — it owns the LevelClear phase
+            // These run outside the Playing guard — each owns its respective phase
             tick_level_clear(&mut s);
+            tick_game_over(&mut s);
         }
 
         // ── Draw ──────────────────────────────────────────────────────────────
@@ -302,12 +312,20 @@ fn draw_scene(
         ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
         ctx.set_fill_style_str("#68fb35");
         ctx.set_text_align("center");
+        let mid_y = if state.game_over_timer >= GAME_OVER_PAUSE {
+            // Shift "GAME OVER" up to make room for the prompt below
+            viewport_h / 2.0 - 40.0
+        } else {
+            viewport_h / 2.0
+        };
         ctx.set_font("bold 64px monospace");
-        ctx.fill_text("GAME OVER", viewport_w / 2.0, viewport_h / 2.0 - 40.0)
+        ctx.fill_text("GAME OVER", viewport_w / 2.0, mid_y)
             .expect("fill_text failed");
-        ctx.set_font("bold 24px monospace");
-        ctx.fill_text("PRESS SPACE TO PLAY AGAIN", viewport_w / 2.0, viewport_h / 2.0 + 30.0)
-            .expect("fill_text failed");
+        if state.game_over_timer >= GAME_OVER_PAUSE {
+            ctx.set_font("bold 24px monospace");
+            ctx.fill_text("PRESS SPACE TO PLAY AGAIN", viewport_w / 2.0, mid_y + 70.0)
+                .expect("fill_text failed");
+        }
     }
 
     draw_hud(ctx, state, sprites, viewport_w);
