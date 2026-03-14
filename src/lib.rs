@@ -1,8 +1,8 @@
 pub mod game;
 
 use game::{
-    build_alien_grid, check_alien_hit_ship, check_bullet_hit, fire, fire_alien_bullet,
-    move_ship, step_alien_bullet, step_bullet, step_grid, AlienKind,
+    advance_level, all_aliens_dead, build_alien_grid, check_alien_hit_ship, check_bullet_hit,
+    fire, fire_alien_bullet, move_ship, step_alien_bullet, step_bullet, step_grid, AlienKind,
     ClassicSpeed, CrispMovement, Direction, GameState, CELL_H, CELL_W, GRID_COLS, GRID_W,
     LEVEL_1, PLAY_MARGIN, SHIP_STEP,
 };
@@ -76,9 +76,9 @@ pub fn start() {
     let sprites: Rc<RefCell<HashMap<&'static str, HtmlImageElement>>> =
         Rc::new(RefCell::new(HashMap::new()));
     let loaded = Rc::new(RefCell::new(0u32));
-    const TOTAL: u32 = 4;
+    const TOTAL: u32 = 7;
 
-    for name in ["crab", "squid", "octopus", "ship"] {
+    for name in ["crab", "crab_f2", "squid", "squid_f2", "octopus", "octopus_f2", "ship"] {
         let img = HtmlImageElement::new().expect("failed to create image");
         img.set_src(&format!("assets/{name}.png"));
 
@@ -175,6 +175,11 @@ fn start_loop(
                 step_alien_bullet(&mut s, viewport_h);
             }
             check_alien_hit_ship(&mut s);
+
+            // Level clear — advance when all aliens are dead
+            if all_aliens_dead(&s) {
+                advance_level(&mut s);
+            }
         }
 
         // ── Draw ──────────────────────────────────────────────────────────────
@@ -213,9 +218,9 @@ fn draw_scene(
 
     for alien in state.aliens.iter().filter(|a| a.alive) {
         let sprite_name = match alien.sprite {
-            AlienKind::Crab    => "crab",
-            AlienKind::Squid   => "squid",
-            AlienKind::Octopus => "octopus",
+            AlienKind::Crab    => if state.grid.anim_frame { "crab_f2"    } else { "crab"    },
+            AlienKind::Squid   => if state.grid.anim_frame { "squid_f2"   } else { "squid"   },
+            AlienKind::Octopus => if state.grid.anim_frame { "octopus_f2" } else { "octopus" },
         };
         if let Some(img) = sprites.get(sprite_name) {
             let cell_x = grid_left + alien.col as f64 * CELL_W;
