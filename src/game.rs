@@ -144,11 +144,18 @@ impl MovementStrategy for CrispMovement {
 }
 
 impl SpeedStrategy for ClassicSpeed {
-    fn step_px(&self, alive_count: usize) -> f64 {
-        if self.total_aliens == 0 { return GRID_BASE_STEP; }
-        let dead = self.total_aliens.saturating_sub(alive_count);
-        let t = dead as f64 / self.total_aliens as f64;
-        GRID_BASE_STEP + t * (GRID_MAX_STEP - GRID_BASE_STEP)
+    fn step_px(&self, _alive_count: usize) -> f64 {
+        GRID_STEP_PX
+    }
+
+    fn tick_interval(&self, alive_count: usize) -> u32 {
+        if self.total_aliens <= 1 { return GRID_TICK_MIN; }
+        // t = 0 at full grid → GRID_TICK_MAX; t = 1 at 1 alien → GRID_TICK_MIN
+        let alive = alive_count.min(self.total_aliens);
+        let t = 1.0 - alive as f64 / self.total_aliens as f64;
+        let range = (GRID_TICK_MAX - GRID_TICK_MIN) as f64;
+        let interval = GRID_TICK_MIN as f64 + (1.0 - t) * range;
+        (interval.round() as u32).max(GRID_TICK_MIN)
     }
 }
 
@@ -159,6 +166,8 @@ impl SpeedStrategy for ClassicSpeed {
 pub fn step_grid(state: &mut GameState, strategy: &dyn SpeedStrategy, max_offset_x: f64) {
     let alive_count = state.aliens.iter().filter(|a| a.alive).count();
     if alive_count == 0 { return; }
+    state.grid.tick = state.grid.tick.wrapping_add(1);
+    if state.grid.tick % strategy.tick_interval(alive_count) != 0 { return; }
     let step = strategy.step_px(alive_count);
     let new_offset = state.grid.offset_x + state.grid.direction as f64 * step;
     if new_offset.abs() >= max_offset_x {
