@@ -1545,6 +1545,16 @@ mod tests {
     }
 
     #[test]
+    fn try_spawn_ufo_does_not_spawn_before_first_grid_step() {
+        let mut state = GameState::new(800, 600);
+        state.ufo_shot_counter = UFO_FIRST_SHOT;
+        // grid has not moved yet — offset_y starts at 0
+        assert_eq!(state.grid.offset_y, 0.0);
+        try_spawn_ufo(&mut state, 1, 800.0, UFO_Y);
+        assert!(state.ufo.is_none());
+    }
+
+    #[test]
     fn tick_ufo_moves_ltr() {
         let mut state = GameState::new(800, 600);
         state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
