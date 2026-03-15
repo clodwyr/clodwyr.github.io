@@ -82,6 +82,10 @@ pub struct GameState {
     pub ufo_shot_counter: u32,
     /// Shot count threshold before the next UFO appears.
     pub ufo_shots_to_next: u32,
+    /// Frames between alien shots for the current level (from LevelSpec).
+    pub alien_fire_interval: u32,
+    /// Grid speed multiplier for the current level (from LevelSpec).
+    pub speed_scale: f64,
 }
 
 impl GameState {
@@ -103,6 +107,8 @@ impl GameState {
             ufo: None,
             ufo_shot_counter: 0,
             ufo_shots_to_next: UFO_FIRST_SHOT,
+            alien_fire_interval: LEVELS[0].alien_fire_interval,
+            speed_scale: LEVELS[0].speed_scale,
         }
     }
 }
@@ -139,8 +145,11 @@ pub trait SpeedStrategy {
 }
 
 /// Classic Space Invaders speed: linearly faster as aliens are killed.
+/// `speed_scale` compresses the tick range downward — lower values mean the
+/// grid moves faster throughout the level.
 pub struct ClassicSpeed {
     pub total_aliens: usize,
+    pub speed_scale: f64,
 }
 
 // ── Ship constants ────────────────────────────────────────────────────────────
@@ -218,7 +227,7 @@ impl SpeedStrategy for ClassicSpeed {
         let t = 1.0 - alive as f64 / self.total_aliens as f64;
         let range = (GRID_TICK_MAX - GRID_TICK_MIN) as f64;
         let interval = GRID_TICK_MIN as f64 + (1.0 - t) * range;
-        (interval.round() as u32).max(GRID_TICK_MIN)
+        ((interval * self.speed_scale).round() as u32).max(GRID_TICK_MIN)
     }
 }
 
@@ -401,8 +410,9 @@ pub fn reset_game(state: &mut GameState) {
     state.lives = 3;
     state.score = 0;
     state.level = 0;
-    state.aliens = build_alien_grid(LEVELS[0]);
-    state.grid = GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0, anim_frame: false };
+    let spec = &LEVELS[0];
+    state.aliens = build_alien_grid(spec.pattern);
+    state.grid = GridMotion { offset_x: 0.0, offset_y: spec.grid_y_offset, direction: 1, tick: 0, anim_frame: false };
     state.bullet = None;
     state.alien_bullets.clear();
     state.pause_timer = 0;
@@ -411,7 +421,9 @@ pub fn reset_game(state: &mut GameState) {
     state.phase = GamePhase::Playing;
     state.ufo = None;
     state.ufo_shot_counter = 0;
-    state.ufo_shots_to_next = UFO_FIRST_SHOT;
+    state.ufo_shots_to_next = spec.ufo_first_shot;
+    state.alien_fire_interval = spec.alien_fire_interval;
+    state.speed_scale = spec.speed_scale;
 }
 
 // ── UFO ───────────────────────────────────────────────────────────────────────
@@ -670,7 +682,7 @@ mod tests {
 
     // ── Grid movement tests ───────────────────────────────────────────────────
 
-    fn classic_55() -> ClassicSpeed { ClassicSpeed { total_aliens: 55 } }
+    fn classic_55() -> ClassicSpeed { ClassicSpeed { total_aliens: 55, speed_scale: 1.0 } }
 
     // Helper: set tick so the very next step_grid call triggers a move (with 55 alive).
     fn prime_tick(state: &mut GameState) {
@@ -767,26 +779,26 @@ mod tests {
 
     #[test]
     fn classic_speed_step_px_is_fixed() {
-        let s = ClassicSpeed { total_aliens: 55 };
+        let s = ClassicSpeed { total_aliens: 55, speed_scale: 1.0 };
         assert_eq!(s.step_px(55), GRID_STEP_PX);
         assert_eq!(s.step_px(1),  GRID_STEP_PX);
     }
 
     #[test]
     fn classic_speed_tick_interval_at_full_grid_is_max() {
-        let s = ClassicSpeed { total_aliens: 55 };
+        let s = ClassicSpeed { total_aliens: 55, speed_scale: 1.0 };
         assert_eq!(s.tick_interval(55), GRID_TICK_MAX);
     }
 
     #[test]
     fn classic_speed_tick_interval_at_one_alien_is_min() {
-        let s = ClassicSpeed { total_aliens: 55 };
+        let s = ClassicSpeed { total_aliens: 55, speed_scale: 1.0 };
         assert_eq!(s.tick_interval(1), GRID_TICK_MIN);
     }
 
     #[test]
     fn classic_speed_tick_interval_decreases_as_aliens_die() {
-        let s = ClassicSpeed { total_aliens: 55 };
+        let s = ClassicSpeed { total_aliens: 55, speed_scale: 1.0 };
         assert!(s.tick_interval(30) < s.tick_interval(55));
         assert!(s.tick_interval(1)  < s.tick_interval(30));
     }
@@ -1097,9 +1109,9 @@ mod tests {
         state.grid.offset_x = 40.0;
         state.grid.offset_y = 96.0;
         state.grid.direction = -1;
-        advance_level(&mut state);
+        advance_level(&mut state); // advances to level 1
         assert_eq!(state.grid.offset_x, 0.0);
-        assert_eq!(state.grid.offset_y, 0.0);
+        assert_eq!(state.grid.offset_y, LEVELS[1].grid_y_offset);
         assert_eq!(state.grid.direction, 1);
     }
 
@@ -1127,8 +1139,73 @@ mod tests {
     }
 
     #[test]
+    fn level_spec_level1_has_fire_interval() {
+        // LevelSpec carries an alien_fire_interval field
+        assert!(LEVELS[0].alien_fire_interval > 0);
+    }
+
+    #[test]
+    fn level_spec_higher_level_fires_faster() {
+        // Each successive level has a shorter (or equal) fire interval
+        assert!(LEVELS[1].alien_fire_interval <= LEVELS[0].alien_fire_interval);
+        assert!(LEVELS[2].alien_fire_interval <= LEVELS[1].alien_fire_interval);
+    }
+
+    #[test]
+    fn level_spec_higher_level_moves_faster() {
+        // Each successive level has a lower (or equal) speed_scale
+        assert!(LEVELS[1].speed_scale <= LEVELS[0].speed_scale);
+        assert!(LEVELS[2].speed_scale <= LEVELS[1].speed_scale);
+    }
+
+    #[test]
+    fn level_spec_higher_level_starts_lower() {
+        // Each successive level has a greater (or equal) grid_y_offset
+        assert!(LEVELS[1].grid_y_offset >= LEVELS[0].grid_y_offset);
+        assert!(LEVELS[2].grid_y_offset >= LEVELS[1].grid_y_offset);
+    }
+
+    #[test]
+    fn reset_game_loads_level1_fire_interval_into_state() {
+        let mut state = GameState::new(800, 600);
+        reset_game(&mut state);
+        assert_eq!(state.alien_fire_interval, LEVELS[0].alien_fire_interval);
+    }
+
+    #[test]
+    fn advance_level_loads_fire_interval_from_spec() {
+        let mut state = GameState::new(800, 600);
+        reset_game(&mut state); // level 0
+        advance_level(&mut state); // level 1
+        assert_eq!(state.alien_fire_interval, LEVELS[1].alien_fire_interval);
+    }
+
+    #[test]
+    fn advance_level_loads_speed_scale_from_spec() {
+        let mut state = GameState::new(800, 600);
+        reset_game(&mut state);
+        advance_level(&mut state);
+        assert_eq!(state.speed_scale, LEVELS[1].speed_scale);
+    }
+
+    #[test]
+    fn advance_level_sets_grid_y_offset_from_spec() {
+        let mut state = GameState::new(800, 600);
+        reset_game(&mut state);
+        advance_level(&mut state); // level 1 — grid_y_offset = CELL_H
+        assert_eq!(state.grid.offset_y, LEVELS[1].grid_y_offset);
+    }
+
+    #[test]
+    fn classic_speed_faster_with_lower_scale() {
+        let slow = ClassicSpeed { total_aliens: 55, speed_scale: 1.0 };
+        let fast = ClassicSpeed { total_aliens: 55, speed_scale: 0.5 };
+        assert!(fast.tick_interval(30) < slow.tick_interval(30));
+    }
+
+    #[test]
     fn level_2_pattern_has_five_rows() {
-        assert_eq!(LEVEL_2.len(), 5);
+        assert_eq!(LEVELS[1].pattern.len(), 5);
     }
 
     // ── Level-clear pause tests ───────────────────────────────────────────────
@@ -1714,6 +1791,22 @@ mod tests {
 /// Rows are top-to-bottom; all rows must be 11 chars wide.
 pub type LevelPattern = &'static [&'static str];
 
+/// All tunable parameters for a single level.
+pub struct LevelSpec {
+    /// Alien type grid — rows of 'S', 'C', 'O' characters.
+    pub pattern: LevelPattern,
+    /// Frames between alien shots (lower = more frequent fire).
+    pub alien_fire_interval: u32,
+    /// Multiplier on tick intervals (< 1.0 = faster grid movement).
+    pub speed_scale: f64,
+    /// Extra pixels the alien grid starts lower on screen at level start.
+    pub grid_y_offset: f64,
+    /// Player shots before the first UFO appears.
+    pub ufo_first_shot: u32,
+    /// Player shots between subsequent UFOs.
+    pub ufo_repeat_shots: u32,
+}
+
 pub const LEVEL_1: LevelPattern = &[
     "SSSSSSSSSSS",
     "CCCCCCCCCCC",
@@ -1722,8 +1815,6 @@ pub const LEVEL_1: LevelPattern = &[
     "OOOOOOOOOOO",
 ];
 
-/// Level 2: squids fill the top two rows, crabs the middle, octopuses at the bottom.
-/// Denser squid presence makes it harder (squids score higher in classic SI).
 pub const LEVEL_2: LevelPattern = &[
     "SSSSSSSSSSS",
     "SSSSSSSSSSS",
@@ -1732,7 +1823,6 @@ pub const LEVEL_2: LevelPattern = &[
     "OOOOOOOOOOO",
 ];
 
-/// Level 3: all squids — maximum difficulty.
 pub const LEVEL_3: LevelPattern = &[
     "SSSSSSSSSSS",
     "SSSSSSSSSSS",
@@ -1742,7 +1832,32 @@ pub const LEVEL_3: LevelPattern = &[
 ];
 
 /// All levels in order. `advance_level` cycles through these and wraps back to 0.
-pub const LEVELS: &[LevelPattern] = &[LEVEL_1, LEVEL_2, LEVEL_3];
+pub const LEVELS: &[LevelSpec] = &[
+    LevelSpec {
+        pattern: LEVEL_1,
+        alien_fire_interval: 90,
+        speed_scale: 1.00,
+        grid_y_offset: 0.0,
+        ufo_first_shot: 23,
+        ufo_repeat_shots: 15,
+    },
+    LevelSpec {
+        pattern: LEVEL_2,
+        alien_fire_interval: 65,
+        speed_scale: 0.75,
+        grid_y_offset: CELL_H,
+        ufo_first_shot: 20,
+        ufo_repeat_shots: 12,
+    },
+    LevelSpec {
+        pattern: LEVEL_3,
+        alien_fire_interval: 45,
+        speed_scale: 0.55,
+        grid_y_offset: CELL_H * 2.0,
+        ufo_first_shot: 15,
+        ufo_repeat_shots: 10,
+    },
+];
 
 /// Returns `true` if every alien in the grid is dead (or the grid is empty).
 pub fn all_aliens_dead(state: &GameState) -> bool {
@@ -1753,10 +1868,15 @@ pub fn all_aliens_dead(state: &GameState) -> bool {
 /// corresponding alien grid, reset grid motion, and clear any in-flight bullets.
 pub fn advance_level(state: &mut GameState) {
     state.level = (state.level + 1) % LEVELS.len();
-    state.aliens = build_alien_grid(LEVELS[state.level]);
-    state.grid = GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0, anim_frame: false };
+    let spec = &LEVELS[state.level];
+    state.aliens = build_alien_grid(spec.pattern);
+    state.grid = GridMotion { offset_x: 0.0, offset_y: spec.grid_y_offset, direction: 1, tick: 0, anim_frame: false };
     state.bullet = None;
     state.alien_bullets.clear();
+    state.alien_fire_interval = spec.alien_fire_interval;
+    state.speed_scale = spec.speed_scale;
+    state.ufo_shots_to_next = spec.ufo_first_shot;
+    state.ufo_shot_counter = 0;
 }
 
 pub fn build_alien_grid(pattern: LevelPattern) -> Vec<Alien> {

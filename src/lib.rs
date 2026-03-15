@@ -126,7 +126,6 @@ fn start_loop(
     let raf_cb_init = raf_cb.clone();
 
     let movement     = CrispMovement { step_px: SHIP_STEP };
-    let speed        = ClassicSpeed { total_aliens: 55 };
 
     // Play area: grid centred with PLAY_MARGIN of breathing room on each side.
     // The grid shifts ±PLAY_MARGIN from centre; ship is bounded to the same area.
@@ -138,8 +137,6 @@ fn start_loop(
     let ship_right     = play_left + GRID_W + 2.0 * PLAY_MARGIN - game::SHIP_HALF_W;
 
     // Frame counter — used as a cheap pseudo-random column selector.
-    // Aliens fire every ALIEN_FIRE_INTERVAL frames from a rotating column.
-    const ALIEN_FIRE_INTERVAL: u32 = 90; // ~1.5 s at 60 fps — easy to tune
     let frame: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
 
     // Track prior-frame key state for rising-edge (fresh-press) detection.
@@ -202,9 +199,10 @@ fn start_loop(
                 let cur_grid_left = base_grid_left + s.grid.offset_x;
                 let cur_grid_top  = grid_top + s.grid.offset_y;
                 check_bullet_hit(&mut s, cur_grid_left, cur_grid_top);
+                let speed = ClassicSpeed { total_aliens: 55, speed_scale: s.speed_scale };
                 step_grid(&mut s, &speed, max_offset_x);
 
-                // Alien shooting — fire from a cycling column every interval
+                // Alien shooting — fire from a cycling column every interval (from level spec)
                 let f = {
                     let mut fc = frame.borrow_mut();
                     *fc += 1;
@@ -217,8 +215,9 @@ fn start_loop(
                 // Bullet clears when it passes below the ship, not the canvas bottom
                 let bullet_floor = s.ship.y + SHIP_HALF_H;
                 step_alien_bullets(&mut s, bullet_floor);
-                if f % ALIEN_FIRE_INTERVAL == 0 {
-                    let col = (f / ALIEN_FIRE_INTERVAL) % GRID_COLS;
+                let fire_interval = s.alien_fire_interval;
+                if f % fire_interval == 0 {
+                    let col = (f / fire_interval) % GRID_COLS;
                     fire_alien_bullet(&mut s, col, cur_grid_left, cur_grid_top);
                 }
                 check_invasion(&mut s, grid_top);
