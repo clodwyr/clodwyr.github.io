@@ -1159,6 +1159,17 @@ mod tests {
     }
 
     #[test]
+    fn check_level_clear_waits_if_ufo_active() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
+        state.aliens = build_alien_grid(LEVEL_1);
+        for a in &mut state.aliens { a.alive = false; }
+        state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        check_level_clear(&mut state);
+        assert_eq!(state.phase, GamePhase::Playing);
+    }
+
+    #[test]
     fn tick_level_clear_increments_pause_timer() {
         let mut state = GameState::new(800, 600);
         state.phase = GamePhase::LevelClear;
@@ -1590,6 +1601,16 @@ mod tests {
         state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
         tick_ufo(&mut state, 800.0);
         assert_eq!(state.ufo.as_ref().unwrap().x, 100.0);
+    }
+
+    #[test]
+    fn tick_ufo_evacuates_faster_when_aliens_all_dead() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
+        for a in &mut state.aliens { a.alive = false; }
+        state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        tick_ufo(&mut state, 800.0);
+        assert!(state.ufo.as_ref().unwrap().x > 100.0 + UFO_STEP);
     }
 
     #[test]
