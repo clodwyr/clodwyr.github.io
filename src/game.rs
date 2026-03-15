@@ -425,6 +425,7 @@ pub fn reset_game(state: &mut GameState) {
 pub fn try_spawn_ufo(state: &mut GameState, direction: i8, canvas_w: f64, ufo_y: f64) {
     if state.ufo.is_some() { return; }
     if state.ufo_shot_counter < state.ufo_shots_to_next { return; }
+    if state.grid.offset_y == 0.0 { return; }
 
     let x = if direction == 1 { -UFO_W } else { canvas_w };
     state.ufo = Some(Ufo { x, y: ufo_y, direction, explosion_timer: 0, score: 0 });
@@ -1504,6 +1505,7 @@ mod tests {
     fn try_spawn_ufo_spawns_at_threshold() {
         let mut state = GameState::new(800, 600);
         state.ufo_shot_counter = UFO_FIRST_SHOT;
+        state.grid.offset_y = CELL_H;
         try_spawn_ufo(&mut state, 1, 800.0, UFO_Y);
         assert!(state.ufo.is_some());
     }
@@ -1512,6 +1514,7 @@ mod tests {
     fn try_spawn_ufo_ltr_starts_left_of_canvas() {
         let mut state = GameState::new(800, 600);
         state.ufo_shot_counter = UFO_FIRST_SHOT;
+        state.grid.offset_y = CELL_H;
         try_spawn_ufo(&mut state, 1, 800.0, UFO_Y);
         assert!(state.ufo.as_ref().unwrap().x < 0.0);
     }
@@ -1520,6 +1523,7 @@ mod tests {
     fn try_spawn_ufo_rtl_starts_right_of_canvas() {
         let mut state = GameState::new(800, 600);
         state.ufo_shot_counter = UFO_FIRST_SHOT;
+        state.grid.offset_y = CELL_H;
         try_spawn_ufo(&mut state, -1, 800.0, UFO_Y);
         assert!(state.ufo.as_ref().unwrap().x >= 800.0);
     }
@@ -1528,6 +1532,7 @@ mod tests {
     fn try_spawn_ufo_resets_counter_and_sets_repeat_threshold() {
         let mut state = GameState::new(800, 600);
         state.ufo_shot_counter = UFO_FIRST_SHOT;
+        state.grid.offset_y = CELL_H;
         try_spawn_ufo(&mut state, 1, 800.0, UFO_Y);
         assert_eq!(state.ufo_shot_counter, 0);
         assert_eq!(state.ufo_shots_to_next, UFO_REPEAT_SHOTS);
@@ -1537,6 +1542,7 @@ mod tests {
     fn try_spawn_ufo_does_nothing_when_ufo_already_active() {
         let mut state = GameState::new(800, 600);
         state.ufo_shot_counter = UFO_FIRST_SHOT;
+        state.grid.offset_y = CELL_H;
         try_spawn_ufo(&mut state, 1, 800.0, UFO_Y);
         state.ufo_shot_counter = UFO_REPEAT_SHOTS;
         try_spawn_ufo(&mut state, 1, 800.0, UFO_Y); // second attempt — UFO still in flight
