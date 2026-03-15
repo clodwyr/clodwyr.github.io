@@ -167,6 +167,8 @@ pub const MAX_ALIEN_BULLETS: usize = 3;
 
 /// Pixels the UFO moves per frame — easy to tune.
 pub const UFO_STEP: f64 = 2.0;
+/// Accelerated speed when UFO evacuates after all aliens are dead.
+pub const UFO_EVAC_STEP: f64 = 8.0;
 /// Default UFO Y used in tests (matches grid_top for a 600px-tall canvas).
 pub const UFO_Y: f64 = 90.0;
 /// UFO sprite width in pixels (16 source pixels × scale 5).
@@ -434,6 +436,7 @@ pub fn try_spawn_ufo(state: &mut GameState, direction: i8, canvas_w: f64, ufo_y:
 /// Removes the UFO once it exits the canvas or its explosion timer reaches zero.
 pub fn tick_ufo(state: &mut GameState, canvas_w: f64) {
     if state.phase == GamePhase::Paused { return; }
+    let evacuating = all_aliens_dead(state);
     let done = match state.ufo {
         None => return,
         Some(ref mut u) => {
@@ -441,7 +444,8 @@ pub fn tick_ufo(state: &mut GameState, canvas_w: f64) {
                 u.explosion_timer -= 1;
                 u.explosion_timer == 0
             } else {
-                u.x += UFO_STEP * u.direction as f64;
+                let step = if evacuating { UFO_EVAC_STEP } else { UFO_STEP };
+                u.x += step * u.direction as f64;
                 // Exited right edge or left edge?
                 u.x >= canvas_w || u.x + UFO_W <= 0.0
             }
@@ -482,7 +486,7 @@ pub const LEVEL_CLEAR_PAUSE: u32 = 120; // ~2 s at 60 fps
 /// and reset the pause timer. Call every frame during the Playing phase.
 pub fn check_level_clear(state: &mut GameState) {
     if state.phase != GamePhase::Playing { return; }
-    if all_aliens_dead(state) {
+    if all_aliens_dead(state) && state.ufo.is_none() {
         state.phase = GamePhase::LevelClear;
         state.pause_timer = 0;
     }
