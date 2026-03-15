@@ -21,11 +21,12 @@ Never skip the red phase. Never write implementation before a test.
 ## Project
 
 Space Invaders game built in Rust, compiled to WebAssembly via Trunk.
-Deployed to GitHub Pages from the `/docs` folder on `main`.
+Deployed to GitHub Pages via GitHub Actions on push to `main`.
 
 ## Stack
 
 - **Rust** + **wasm-bindgen** + **web-sys**
 - **Trunk** for building (no JS tooling)
-- Output goes to `/docs`, committed to `main`
+- Output goes to `/docs` locally (gitignored — never commit build artifacts)
+- CI builds and deploys automatically via `.github/workflows/deploy.yml`
 - Static fallback (`<img>`) for environments without Wasm support
