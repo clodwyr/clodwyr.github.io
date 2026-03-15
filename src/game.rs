@@ -14,6 +14,32 @@ pub enum AlienKind {
     Octopus,
 }
 
+const BULLET_PROFILE_SQUID: BulletProfile = BulletProfile {
+    color: "#ff2244",
+    speed: 6.0,
+    ground_explosion: true,
+};
+const BULLET_PROFILE_CRAB: BulletProfile = BulletProfile {
+    color: "#ff8800",
+    speed: 4.0,
+    ground_explosion: false,
+};
+const BULLET_PROFILE_OCTOPUS: BulletProfile = BulletProfile {
+    color: "#ffff44",
+    speed: 3.0,
+    ground_explosion: false,
+};
+
+impl AlienKind {
+    pub fn bullet_profile(&self) -> &'static BulletProfile {
+        match self {
+            AlienKind::Squid   => &BULLET_PROFILE_SQUID,
+            AlienKind::Crab    => &BULLET_PROFILE_CRAB,
+            AlienKind::Octopus => &BULLET_PROFILE_OCTOPUS,
+        }
+    }
+}
+
 pub struct Ship {
     pub x: f64, // canvas x of ship centre
     pub y: f64, // canvas y of ship centre
@@ -27,7 +53,32 @@ pub struct Bullet {
 pub struct AlienBullet {
     pub x: f64,
     pub y: f64,
+    /// The alien type that fired this bullet — determines visual and behaviour profile.
+    pub kind: AlienKind,
 }
+
+/// Visual and gameplay properties for an alien type's bullet.
+/// Add new fields here to extend bullet behaviour (wobble, damage, etc.)
+/// without changing AlienBullet or the firing logic.
+pub struct BulletProfile {
+    /// CSS colour string used by the renderer.
+    pub color: &'static str,
+    /// Pixels the bullet travels downward per frame.
+    pub speed: f64,
+    /// When true, a GroundExplosion is spawned if the bullet reaches the floor.
+    pub ground_explosion: bool,
+    // Future: pub wobble: bool,
+    // Future: pub damage: u32,
+}
+
+/// Small particle effect spawned when a bullet with `ground_explosion = true` hits the floor.
+pub struct GroundExplosion {
+    pub x: f64,
+    pub y: f64,
+    pub timer: u8,
+}
+
+pub const GROUND_EXPLOSION_FRAMES: u8 = 15;
 
 pub struct Ufo {
     pub x: f64,
@@ -66,6 +117,7 @@ pub struct GameState {
     pub ship: Ship,
     pub bullet: Option<Bullet>,
     pub alien_bullets: Vec<AlienBullet>,
+    pub ground_explosions: Vec<GroundExplosion>,
     pub grid: GridMotion,
     pub score: u32,
     pub lives: u32,
@@ -97,6 +149,7 @@ impl GameState {
             ship: Ship { x: width as f64 / 2.0, y: height as f64 - 40.0 },
             bullet: None,
             alien_bullets: Vec::new(),
+            ground_explosions: Vec::new(),
             grid: GridMotion { offset_x: 0.0, offset_y: 0.0, direction: 1, tick: 0, anim_frame: false },
             score: 0,
             lives: 3,
@@ -330,17 +383,37 @@ pub fn fire_alien_bullet(state: &mut GameState, col: u32, grid_left: f64, grid_t
     if let Some(alien) = lowest {
         let x = grid_left + alien.col as f64 * CELL_W + CELL_W / 2.0;
         let y = grid_top  + alien.row as f64 * CELL_H + CELL_H;
-        state.alien_bullets.push(AlienBullet { x, y });
+        state.alien_bullets.push(AlienBullet { x, y, kind: alien.sprite });
     }
 }
 
-/// Advance all alien bullets downward by ALIEN_BULLET_STEP.
-/// Removes any that have moved past `canvas_h`.
+/// Advance all alien bullets downward at their per-kind speed.
+/// Bullets that pass `canvas_h` are removed; those whose kind has
+/// `ground_explosion = true` also spawn a GroundExplosion on exit.
 pub fn step_alien_bullets(state: &mut GameState, canvas_h: f64) {
+    let mut explosions: Vec<GroundExplosion> = Vec::new();
     for ab in &mut state.alien_bullets {
-        ab.y += ALIEN_BULLET_STEP;
+        ab.y += ab.kind.bullet_profile().speed;
     }
-    state.alien_bullets.retain(|ab| ab.y <= canvas_h);
+    state.alien_bullets.retain(|ab| {
+        if ab.y > canvas_h {
+            if ab.kind.bullet_profile().ground_explosion {
+                explosions.push(GroundExplosion { x: ab.x, y: canvas_h, timer: GROUND_EXPLOSION_FRAMES });
+            }
+            false
+        } else {
+            true
+        }
+    });
+    state.ground_explosions.extend(explosions);
+}
+
+/// Tick down ground explosion timers; remove expired ones.
+pub fn tick_ground_explosions(state: &mut GameState) {
+    for ge in &mut state.ground_explosions {
+        ge.timer = ge.timer.saturating_sub(1);
+    }
+    state.ground_explosions.retain(|ge| ge.timer > 0);
 }
 
 /// Check whether any alien bullet overlaps the ship.
@@ -415,6 +488,7 @@ pub fn reset_game(state: &mut GameState) {
     state.grid = GridMotion { offset_x: 0.0, offset_y: spec.grid_y_offset, direction: 1, tick: 0, anim_frame: false };
     state.bullet = None;
     state.alien_bullets.clear();
+    state.ground_explosions.clear();
     state.pause_timer = 0;
     state.game_over_timer = 0;
     state.ship.x = state.width as f64 / 2.0;
@@ -930,23 +1004,100 @@ mod tests {
     #[test]
     fn step_alien_bullets_moves_downward() {
         let mut state = GameState::new(800, 600);
-        state.alien_bullets.push(AlienBullet { x: 100.0, y: 200.0 });
+        state.alien_bullets.push(AlienBullet { x: 100.0, y: 200.0, kind: AlienKind::Crab });
         step_alien_bullets(&mut state, 600.0);
-        assert_eq!(state.alien_bullets[0].y, 200.0 + ALIEN_BULLET_STEP);
+        let expected = 200.0 + AlienKind::Crab.bullet_profile().speed;
+        assert_eq!(state.alien_bullets[0].y, expected);
     }
 
     #[test]
     fn step_alien_bullets_clears_when_below_canvas() {
         let mut state = GameState::new(800, 600);
-        state.alien_bullets.push(AlienBullet { x: 100.0, y: 598.0 });
+        state.alien_bullets.push(AlienBullet { x: 100.0, y: 598.0, kind: AlienKind::Crab });
         step_alien_bullets(&mut state, 600.0);
         assert!(state.alien_bullets.is_empty());
     }
 
     #[test]
+    // ── Bullet profile tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn alien_bullet_carries_kind() {
+        // AlienBullet must have a `kind: AlienKind` field
+        let b = AlienBullet { x: 0.0, y: 0.0, kind: AlienKind::Squid };
+        assert!(matches!(b.kind, AlienKind::Squid));
+    }
+
+    #[test]
+    fn fire_alien_bullet_sets_kind_from_firing_alien() {
+        // Row 0 (top) of LEVEL_1 is Squids — bullet from col 0 should be Squid kind
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        // Kill rows 1-4 in col 0 so only the squid in row 0 remains
+        for a in state.aliens.iter_mut() {
+            if a.col == 0 && a.row > 0 { a.alive = false; }
+        }
+        fire_alien_bullet(&mut state, 0, 0.0, 0.0);
+        let ab = state.alien_bullets.last().unwrap();
+        assert!(matches!(ab.kind, AlienKind::Squid));
+    }
+
+    #[test]
+    fn squid_bullet_profile_faster_than_octopus() {
+        assert!(AlienKind::Squid.bullet_profile().speed > AlienKind::Octopus.bullet_profile().speed);
+    }
+
+    #[test]
+    fn step_alien_bullets_uses_per_kind_speed() {
+        let mut state = GameState::new(800, 600);
+        state.alien_bullets.push(AlienBullet { x: 100.0, y: 100.0, kind: AlienKind::Squid });
+        state.alien_bullets.push(AlienBullet { x: 200.0, y: 100.0, kind: AlienKind::Octopus });
+        step_alien_bullets(&mut state, 600.0);
+        let squid_y  = state.alien_bullets[0].y;
+        let octopus_y = state.alien_bullets[1].y;
+        assert!(squid_y > octopus_y, "squid bullet should move further in one step");
+    }
+
+    #[test]
+    fn ground_explosion_spawned_when_bullet_with_profile_hits_floor() {
+        let mut state = GameState::new(800, 600);
+        // Use a kind whose profile has ground_explosion = true
+        let kind = AlienKind::Squid;
+        assert!(kind.bullet_profile().ground_explosion, "test relies on squid having ground_explosion");
+        state.alien_bullets.push(AlienBullet { x: 100.0, y: 598.0, kind });
+        step_alien_bullets(&mut state, 600.0);
+        assert!(!state.ground_explosions.is_empty());
+    }
+
+    #[test]
+    fn no_ground_explosion_when_crab_bullet_hits_floor() {
+        let mut state = GameState::new(800, 600);
+        assert!(!AlienKind::Crab.bullet_profile().ground_explosion);
+        state.alien_bullets.push(AlienBullet { x: 100.0, y: 598.0, kind: AlienKind::Crab });
+        step_alien_bullets(&mut state, 600.0);
+        assert!(state.ground_explosions.is_empty());
+    }
+
+    #[test]
+    fn tick_ground_explosions_decrements_timer() {
+        let mut state = GameState::new(800, 600);
+        state.ground_explosions.push(GroundExplosion { x: 100.0, y: 500.0, timer: 10 });
+        tick_ground_explosions(&mut state);
+        assert_eq!(state.ground_explosions[0].timer, 9);
+    }
+
+    #[test]
+    fn tick_ground_explosions_removes_expired() {
+        let mut state = GameState::new(800, 600);
+        state.ground_explosions.push(GroundExplosion { x: 100.0, y: 500.0, timer: 1 });
+        tick_ground_explosions(&mut state);
+        assert!(state.ground_explosions.is_empty());
+    }
+
+    #[test]
     fn check_alien_hit_ship_decrements_lives_on_overlap() {
         let mut state = GameState::new(800, 600);
-        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y });
+        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y, kind: AlienKind::Crab });
         check_alien_hit_ship(&mut state);
         assert_eq!(state.lives, 2);
     }
@@ -954,7 +1105,7 @@ mod tests {
     #[test]
     fn check_alien_hit_ship_clears_alien_bullet_on_hit() {
         let mut state = GameState::new(800, 600);
-        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y });
+        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y, kind: AlienKind::Crab });
         check_alien_hit_ship(&mut state);
         assert!(state.alien_bullets.is_empty());
     }
@@ -962,7 +1113,7 @@ mod tests {
     #[test]
     fn check_alien_hit_ship_does_nothing_when_bullet_misses() {
         let mut state = GameState::new(800, 600);
-        state.alien_bullets.push(AlienBullet { x: 0.0, y: 0.0 });
+        state.alien_bullets.push(AlienBullet { x: 0.0, y: 0.0, kind: AlienKind::Crab });
         check_alien_hit_ship(&mut state);
         assert_eq!(state.lives, 3);
         assert_eq!(state.alien_bullets.len(), 1);
@@ -979,7 +1130,7 @@ mod tests {
     fn check_alien_hit_ship_sets_game_over_when_last_life_lost() {
         let mut state = GameState::new(800, 600);
         state.lives = 1;
-        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y });
+        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y, kind: AlienKind::Crab });
         check_alien_hit_ship(&mut state);
         assert_eq!(state.lives, 0);
         assert_eq!(state.phase, GamePhase::GameOver);
@@ -990,7 +1141,7 @@ mod tests {
         let mut state = GameState::new(800, 600);
         state.phase = GamePhase::Playing;
         state.lives = 2;
-        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y });
+        state.alien_bullets.push(AlienBullet { x: state.ship.x, y: state.ship.y, kind: AlienKind::Crab });
         check_alien_hit_ship(&mut state);
         assert_eq!(state.phase, GamePhase::Playing);
     }
@@ -1119,7 +1270,7 @@ mod tests {
     fn advance_level_clears_bullets() {
         let mut state = GameState::new(800, 600);
         state.bullet = Some(Bullet { x: 100.0, y: 100.0 });
-        state.alien_bullets.push(AlienBullet { x: 200.0, y: 200.0 });
+        state.alien_bullets.push(AlienBullet { x: 200.0, y: 200.0, kind: AlienKind::Crab });
         advance_level(&mut state);
         assert!(state.bullet.is_none());
         assert!(state.alien_bullets.is_empty());
@@ -1338,7 +1489,7 @@ mod tests {
     fn reset_game_clears_bullets() {
         let mut state = GameState::new(800, 600);
         state.bullet = Some(Bullet { x: 100.0, y: 100.0 });
-        state.alien_bullets.push(AlienBullet { x: 200.0, y: 200.0 });
+        state.alien_bullets.push(AlienBullet { x: 200.0, y: 200.0, kind: AlienKind::Crab });
         reset_game(&mut state);
         assert!(state.bullet.is_none());
         assert!(state.alien_bullets.is_empty());
@@ -1480,7 +1631,7 @@ mod tests {
     fn fire_alien_bullet_can_fire_second_when_first_in_flight() {
         let mut state = GameState::new(800, 600);
         state.aliens = build_alien_grid(LEVEL_1);
-        state.alien_bullets.push(AlienBullet { x: 999.0, y: 999.0 });
+        state.alien_bullets.push(AlienBullet { x: 999.0, y: 999.0, kind: AlienKind::Crab });
         fire_alien_bullet(&mut state, 5, 0.0, 0.0);
         assert_eq!(state.alien_bullets.len(), 2);
     }
@@ -1490,7 +1641,7 @@ mod tests {
         let mut state = GameState::new(800, 600);
         state.aliens = build_alien_grid(LEVEL_1);
         for _ in 0..MAX_ALIEN_BULLETS {
-            state.alien_bullets.push(AlienBullet { x: 0.0, y: 0.0 });
+            state.alien_bullets.push(AlienBullet { x: 0.0, y: 0.0, kind: AlienKind::Crab });
         }
         fire_alien_bullet(&mut state, 0, 0.0, 0.0);
         assert_eq!(state.alien_bullets.len(), MAX_ALIEN_BULLETS);
@@ -1500,8 +1651,8 @@ mod tests {
     fn step_alien_bullets_moves_all() {
         let mut state = GameState::new(800, 600);
         state.alien_bullets = vec![
-            AlienBullet { x: 100.0, y: 50.0 },
-            AlienBullet { x: 200.0, y: 80.0 },
+            AlienBullet { x: 100.0, y: 50.0, kind: AlienKind::Crab },
+            AlienBullet { x: 200.0, y: 80.0, kind: AlienKind::Crab },
         ];
         step_alien_bullets(&mut state, 600.0);
         assert_eq!(state.alien_bullets[0].y, 50.0 + ALIEN_BULLET_STEP);
@@ -1512,8 +1663,8 @@ mod tests {
     fn step_alien_bullets_clears_bullets_past_canvas_bottom() {
         let mut state = GameState::new(800, 600);
         state.alien_bullets = vec![
-            AlienBullet { x: 100.0, y: 598.0 }, // will step past 600
-            AlienBullet { x: 200.0, y: 10.0 },  // stays in play
+            AlienBullet { x: 100.0, y: 598.0, kind: AlienKind::Crab }, // will step past 600
+            AlienBullet { x: 200.0, y: 10.0, kind: AlienKind::Crab },  // stays in play
         ];
         step_alien_bullets(&mut state, 600.0);
         assert_eq!(state.alien_bullets.len(), 1);
@@ -1525,8 +1676,8 @@ mod tests {
         let mut state = GameState::new(800, 600);
         state.lives = 3;
         state.alien_bullets = vec![
-            AlienBullet { x: -999.0, y: -999.0 },
-            AlienBullet { x: state.ship.x, y: state.ship.y },
+            AlienBullet { x: -999.0, y: -999.0, kind: AlienKind::Crab },
+            AlienBullet { x: state.ship.x, y: state.ship.y, kind: AlienKind::Crab },
         ];
         check_alien_hit_ship(&mut state);
         assert_eq!(state.lives, 2);
@@ -1873,6 +2024,7 @@ pub fn advance_level(state: &mut GameState) {
     state.grid = GridMotion { offset_x: 0.0, offset_y: spec.grid_y_offset, direction: 1, tick: 0, anim_frame: false };
     state.bullet = None;
     state.alien_bullets.clear();
+    state.ground_explosions.clear();
     state.alien_fire_interval = spec.alien_fire_interval;
     state.speed_scale = spec.speed_scale;
     state.ufo_shots_to_next = spec.ufo_first_shot;

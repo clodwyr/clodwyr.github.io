@@ -3,10 +3,11 @@ pub mod game;
 use game::{
     check_alien_hit_ship, check_bullet_hit, check_invasion, check_level_clear, check_ufo_hit,
     fire, fire_alien_bullet, move_ship, pause_game, quit_game, reset_game, step_alien_bullets,
-    step_bullet, step_grid, tick_explosions, tick_game_over, tick_level_clear, tick_ufo,
-    try_spawn_ufo, AlienKind, ClassicSpeed, CrispMovement, Direction, GamePhase, GameState,
+    step_bullet, step_grid, tick_explosions, tick_game_over, tick_ground_explosions,
+    tick_level_clear, tick_ufo, try_spawn_ufo, AlienKind, ClassicSpeed, CrispMovement,
+    Direction, GamePhase, GameState,
     CELL_H, CELL_W, GAME_OVER_PAUSE, GRID_COLS, GRID_W, PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
-    UFO_H, UFO_SCORES, UFO_W,
+    GROUND_EXPLOSION_FRAMES, UFO_H, UFO_SCORES, UFO_W,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -227,6 +228,7 @@ fn start_loop(
             tick_level_clear(&mut s);
             tick_game_over(&mut s);
             tick_explosions(&mut s);
+            tick_ground_explosions(&mut s);
             tick_ufo(&mut s, viewport_w);
         }
 
@@ -305,10 +307,20 @@ fn draw_scene(
         ctx.fill_rect(b.x - 1.5, b.y - 12.0, 3.0, 12.0);
     }
 
-    // Alien bullets — 3×12px red rects
-    ctx.set_fill_style_str("#ff4444");
+    // Alien bullets — per-kind colour, 3×12px rects
     for ab in &state.alien_bullets {
+        ctx.set_fill_style_str(ab.kind.bullet_profile().color);
         ctx.fill_rect(ab.x - 1.5, ab.y, 3.0, 12.0);
+    }
+
+    // Ground explosions — small burst for squid bullets hitting the floor
+    for ge in &state.ground_explosions {
+        let alpha = ge.timer as f64 / game::GROUND_EXPLOSION_FRAMES as f64;
+        ctx.set_global_alpha(alpha);
+        ctx.set_fill_style_str(AlienKind::Squid.bullet_profile().color);
+        ctx.fill_rect(ge.x - 8.0, ge.y - 6.0, 16.0, 6.0);
+        ctx.fill_rect(ge.x - 4.0, ge.y - 10.0, 8.0, 4.0);
+        ctx.set_global_alpha(1.0);
     }
 
     // UFO — sprite while alive; score text while exploding
