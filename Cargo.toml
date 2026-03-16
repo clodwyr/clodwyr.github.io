@@ -24,6 +24,16 @@ features = [
   "EventTarget",
   "Event",
   "KeyboardEvent",
+  "AudioContext",
+  "AudioNode",
+  "AudioDestinationNode",
+  "AudioParam",
+  "AudioBuffer",
+  "AudioBufferSourceNode",
+  "AudioScheduledSourceNode",
+  "OscillatorNode",
+  "OscillatorType",
+  "GainNode",
 ]
 
 [[bin]]

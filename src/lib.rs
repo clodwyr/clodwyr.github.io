@@ -1,13 +1,16 @@
 pub mod game;
+pub mod sound;
+
+use sound::SoundEngine;
 
 use game::{
     check_alien_hit_ship, check_bullet_hit, check_invasion, check_level_clear, check_ufo_hit,
     fire, fire_alien_bullet, move_ship, pause_game, quit_game, reset_game, step_alien_bullets,
     step_bullet, step_grid, tick_explosions, tick_game_over, tick_ground_explosions,
     tick_level_clear, tick_ufo, try_spawn_ufo, AlienKind, ClassicSpeed, CrispMovement,
-    Direction, GamePhase, GameState,
+    Direction, GamePhase, GameState, SpeedStrategy,
     CELL_H, CELL_W, GAME_OVER_PAUSE, GRID_COLS, GRID_W, PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
-    GROUND_EXPLOSION_FRAMES, UFO_H, UFO_SCORES, UFO_W,
+    UFO_H, UFO_SCORES, UFO_W,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -145,6 +148,12 @@ fn start_loop(
     let mut p_was_held = false;
     let mut q_was_held = false;
 
+    // Sound engine — created here, resumed on first Space press (autoplay policy).
+    let mut sound: Option<SoundEngine> = SoundEngine::new().ok();
+    let mut sound_initialized = false;
+    // UFO sound state — tracks whether the continuous tone is running.
+    let mut ufo_sound_active = false;
+
     *raf_cb_init.borrow_mut() = Some(Closure::wrap(Box::new(move || {
         // ── Update ────────────────────────────────────────────────────────────
         {
@@ -162,6 +171,11 @@ fn start_loop(
             q_was_held = q_now;
 
             if space_just_pressed {
+                // Resume AudioContext on first user gesture (browser autoplay policy).
+                if !sound_initialized {
+                    if let Some(ref snd) = sound { snd.resume(); }
+                    sound_initialized = true;
+                }
                 match s.phase {
                     GamePhase::Attract => reset_game(&mut s),
                     // Only allow restart once the game-over message has been visible long enough
@@ -187,20 +201,46 @@ fn start_loop(
                     move_ship(&mut s.ship, Direction::Right, &movement, ship_left, ship_right);
                 }
                 if held.contains_key(" ") {
+                    let had_bullet = s.bullet.is_some();
                     fire(&mut s);
+                    if !had_bullet && s.bullet.is_some() {
+                        if let Some(ref snd) = sound { snd.play_player_fire(); }
+                    }
                     // Try to spawn UFO with a randomly chosen direction
                     let direction = if Math::random() < 0.5 { 1i8 } else { -1i8 };
                     try_spawn_ufo(&mut s, direction, viewport_w, grid_top);
                 }
                 step_bullet(&mut s, grid_top);
-                // Check UFO hit before advancing bullet further
+                // Check UFO hit — detect transition to explosion state for sound
+                let ufo_was_alive = s.ufo.as_ref().map(|u| u.explosion_timer == 0).unwrap_or(false);
                 let ufo_score = UFO_SCORES[(Math::random() * UFO_SCORES.len() as f64) as usize];
                 check_ufo_hit(&mut s, ufo_score);
+                let ufo_just_hit = ufo_was_alive
+                    && s.ufo.as_ref().map(|u| u.explosion_timer > 0).unwrap_or(false);
+                if ufo_just_hit {
+                    if let Some(ref mut snd) = sound {
+                        snd.stop_ufo_sound();
+                        snd.play_ufo_hit();
+                    }
+                    ufo_sound_active = false;
+                }
                 // Collision: compute current grid canvas origin from live offsets
                 let cur_grid_left = base_grid_left + s.grid.offset_x;
                 let cur_grid_top  = grid_top + s.grid.offset_y;
+                let alive_before = s.aliens.iter().filter(|a| a.alive).count();
                 check_bullet_hit(&mut s, cur_grid_left, cur_grid_top);
+                if s.aliens.iter().filter(|a| a.alive).count() < alive_before {
+                    if let Some(ref snd) = sound { snd.play_alien_explosion(); }
+                }
                 let speed = ClassicSpeed { total_aliens: 55, speed_scale: s.speed_scale };
+                // Advance march engine — tempo locked to grid tick interval
+                let alive_count = s.aliens.iter().filter(|a| a.alive).count();
+                let tick_interval = speed.tick_interval(alive_count);
+                if let Some(ref mut snd) = sound {
+                    if let Some(note) = snd.march.tick(tick_interval) {
+                        snd.play_march_note(note);
+                    }
+                }
                 step_grid(&mut s, &speed, max_offset_x);
 
                 // Alien shooting — fire from a cycling column every interval (from level spec)
@@ -209,10 +249,12 @@ fn start_loop(
                     *fc += 1;
                     *fc
                 };
-                // Check hit against current bullet position BEFORE stepping,
-                // so the bullet can't be cleared past the floor before the
-                // collision is tested.
+                // Detect ship hit for explosion sound
+                let lives_before = s.lives;
                 check_alien_hit_ship(&mut s);
+                if s.lives < lives_before {
+                    if let Some(ref snd) = sound { snd.play_ship_explosion(); }
+                }
                 // Bullet clears when it passes below the ship, not the canvas bottom
                 let bullet_floor = s.ship.y + SHIP_HALF_H;
                 step_alien_bullets(&mut s, bullet_floor);
@@ -223,6 +265,17 @@ fn start_loop(
                 }
                 check_invasion(&mut s, grid_top);
                 check_level_clear(&mut s);
+            }
+            // UFO flyby sound — start/stop continuous tone as UFO appears/disappears
+            {
+                let ufo_now_active = s.ufo.as_ref().map(|u| u.explosion_timer == 0).unwrap_or(false);
+                if ufo_now_active && !ufo_sound_active {
+                    if let Some(ref mut snd) = sound { snd.start_ufo_sound(); }
+                    ufo_sound_active = true;
+                } else if !ufo_now_active && ufo_sound_active {
+                    if let Some(ref mut snd) = sound { snd.stop_ufo_sound(); }
+                    ufo_sound_active = false;
+                }
             }
             // These run outside the Playing guard — each owns its respective phase
             tick_level_clear(&mut s);
