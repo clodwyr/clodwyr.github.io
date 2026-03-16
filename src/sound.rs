@@ -54,14 +54,21 @@ pub struct SoundEngine {
     /// Pre-generated UFO audio buffer (generated once in new()).
     ufo_buffer: Option<AudioBuffer>,
     pub march: MarchEngine,
+    pub muted: bool,
 }
 
 impl SoundEngine {
     pub fn new() -> Result<Self, JsValue> {
         let ctx = AudioContext::new()?;
         let ufo_buffer = build_ufo_buffer(&ctx).ok();
-        Ok(SoundEngine { ctx, ufo_source: None, ufo_gain: None, ufo_buffer, march: MarchEngine::new() })
+        Ok(SoundEngine { ctx, ufo_source: None, ufo_gain: None, ufo_buffer, march: MarchEngine::new(), muted: false })
     }
+
+    /// Default mute state (false = unmuted). Used in tests without an AudioContext.
+    pub fn muted_default() -> bool { false }
+
+    /// Flip the mute flag. Returns the new state.
+    pub fn toggle(muted: &mut bool) -> bool { *muted = !*muted; *muted }
 
     /// Must be called after the first user gesture to satisfy browser autoplay policy.
     pub fn resume(&self) {
@@ -72,6 +79,7 @@ impl SoundEngine {
 
     /// Short high-pitched square-wave burst.
     pub fn play_player_fire(&self) {
+        if self.muted { return; }
         self.play_osc(OscillatorType::Square, 880.0, None, 0.25, FIRE_DURATION);
     }
 
@@ -79,6 +87,7 @@ impl SoundEngine {
 
     /// Mid-pitched sawtooth burst — crisp pop.
     pub fn play_alien_explosion(&self) {
+        if self.muted { return; }
         self.play_osc(OscillatorType::Sawtooth, 200.0, None, 0.4, ALIEN_EXP_DURATION);
     }
 
@@ -86,6 +95,7 @@ impl SoundEngine {
 
     /// Low sawtooth rumble, longer decay.
     pub fn play_ship_explosion(&self) {
+        if self.muted { return; }
         self.play_osc(OscillatorType::Sawtooth, 80.0, None, 0.7, SHIP_EXP_DURATION);
     }
 
@@ -93,7 +103,7 @@ impl SoundEngine {
 
     /// Start the looping sfxr-generated UFO buffer while the UFO is on screen.
     pub fn start_ufo_sound(&mut self) {
-        if self.ufo_source.is_some() { return; }
+        if self.muted || self.ufo_source.is_some() { return; }
         let Some(ref buf) = self.ufo_buffer else { return };
         let Ok(source) = self.ctx.create_buffer_source() else { return };
         let Ok(gain)   = self.ctx.create_gain()           else { return };
@@ -120,6 +130,7 @@ impl SoundEngine {
 
     /// Descending sawtooth tone.
     pub fn play_ufo_hit(&self) {
+        if self.muted { return; }
         self.play_osc(OscillatorType::Sawtooth, 660.0, Some(110.0), 0.3, UFO_HIT_DURATION);
     }
 
@@ -127,6 +138,7 @@ impl SoundEngine {
 
     /// Play one march note (0-3 → `MARCH_NOTES` frequencies).
     pub fn play_march_note(&self, note_index: usize) {
+        if self.muted { return; }
         let freq = MARCH_NOTES[note_index % MARCH_NOTES.len()] as f32;
         self.play_osc(OscillatorType::Square, freq, None, 0.2, MARCH_DURATION);
     }
@@ -306,5 +318,25 @@ mod tests {
         for _ in 0..9 {
             assert!(engine.tick(10).is_none());
         }
+    }
+
+    #[test]
+    fn sound_engine_starts_unmuted() {
+        assert!(!SoundEngine::muted_default());
+    }
+
+    #[test]
+    fn toggle_mute_enables_mute() {
+        let mut muted = false;
+        SoundEngine::toggle(&mut muted);
+        assert!(muted);
+    }
+
+    #[test]
+    fn toggle_mute_twice_restores_unmuted() {
+        let mut muted = false;
+        SoundEngine::toggle(&mut muted);
+        SoundEngine::toggle(&mut muted);
+        assert!(!muted);
     }
 }

@@ -147,6 +147,7 @@ fn start_loop(
     let mut space_was_held = false;
     let mut p_was_held = false;
     let mut q_was_held = false;
+    let mut s_was_held = false;
 
     // Sound engine — created here, resumed on first Space press (autoplay policy).
     let mut sound: Option<SoundEngine> = SoundEngine::new().ok();
@@ -163,12 +164,15 @@ fn start_loop(
             let space_now = keys.borrow().contains_key(" ");
             let p_now     = keys.borrow().contains_key("p") || keys.borrow().contains_key("P");
             let q_now     = keys.borrow().contains_key("q") || keys.borrow().contains_key("Q");
+            let s_now     = keys.borrow().contains_key("s") || keys.borrow().contains_key("S");
             let space_just_pressed = space_now && !space_was_held;
             let p_just_pressed     = p_now && !p_was_held;
             let q_just_pressed     = q_now && !q_was_held;
+            let s_just_pressed     = s_now && !s_was_held;
             space_was_held = space_now;
             p_was_held = p_now;
             q_was_held = q_now;
+            s_was_held = s_now;
 
             if space_just_pressed {
                 // Resume AudioContext on first user gesture (browser autoplay policy).
@@ -190,6 +194,18 @@ fn start_loop(
             }
             if q_just_pressed {
                 quit_game(&mut s);
+            }
+            if s_just_pressed {
+                if let Some(ref mut snd) = sound {
+                    let now_muted = SoundEngine::toggle(&mut snd.muted);
+                    // Stop UFO tone immediately on mute; restart if UFO is still flying.
+                    if now_muted {
+                        snd.stop_ufo_sound();
+                        ufo_sound_active = false;
+                    } else if ufo_sound_active {
+                        snd.start_ufo_sound();
+                    }
+                }
             }
 
             if s.phase == GamePhase::Playing {
