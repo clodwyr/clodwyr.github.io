@@ -138,6 +138,8 @@ pub struct GameState {
     pub alien_fire_interval: u32,
     /// Grid speed multiplier for the current level (from LevelSpec).
     pub speed_scale: f64,
+    /// Maximum alien bullets in flight simultaneously (from LevelSpec).
+    pub max_alien_bullets: usize,
 }
 
 impl GameState {
@@ -162,6 +164,7 @@ impl GameState {
             ufo_shots_to_next: UFO_FIRST_SHOT,
             alien_fire_interval: LEVELS[0].alien_fire_interval,
             speed_scale: LEVELS[0].speed_scale,
+            max_alien_bullets: LEVELS[0].max_alien_bullets,
         }
     }
 }
@@ -373,9 +376,9 @@ pub fn step_bullet(state: &mut GameState, boundary_top: f64) {
 
 /// Fire an alien bullet from the lowest alive alien in `col`.
 /// `grid_left` / `grid_top` are the canvas coordinates of the grid's top-left corner.
-/// Does nothing if MAX_ALIEN_BULLETS are already in flight or no alive alien occupies that column.
+/// Does nothing if `state.max_alien_bullets` are already in flight or no alive alien occupies that column.
 pub fn fire_alien_bullet(state: &mut GameState, col: u32, grid_left: f64, grid_top: f64) {
-    if state.alien_bullets.len() >= MAX_ALIEN_BULLETS { return; }
+    if state.alien_bullets.len() >= state.max_alien_bullets { return; }
     // Find the highest row number (= lowest on screen) that is alive in this column
     let lowest = state.aliens.iter()
         .filter(|a| a.alive && a.col == col)
@@ -498,6 +501,7 @@ pub fn reset_game(state: &mut GameState) {
     state.ufo_shots_to_next = spec.ufo_first_shot;
     state.alien_fire_interval = spec.alien_fire_interval;
     state.speed_scale = spec.speed_scale;
+    state.max_alien_bullets = spec.max_alien_bullets;
 }
 
 // ── UFO ───────────────────────────────────────────────────────────────────────
@@ -1290,6 +1294,55 @@ mod tests {
     }
 
     #[test]
+    fn levels_has_ten_entries() {
+        assert_eq!(LEVELS.len(), 10);
+    }
+
+    #[test]
+    fn level_spec_has_max_alien_bullets_field() {
+        assert!(LEVELS[0].max_alien_bullets > 0);
+    }
+
+    #[test]
+    fn level_4_has_more_max_bullets_than_level_3() {
+        assert!(LEVELS[3].max_alien_bullets > LEVELS[2].max_alien_bullets);
+    }
+
+    #[test]
+    fn later_levels_never_have_fewer_max_bullets_than_earlier() {
+        for i in 1..LEVELS.len() {
+            assert!(LEVELS[i].max_alien_bullets >= LEVELS[i - 1].max_alien_bullets,
+                "level {} has fewer max_bullets than level {}", i + 1, i);
+        }
+    }
+
+    #[test]
+    fn reset_game_loads_max_alien_bullets_from_level1_spec() {
+        let mut state = GameState::new(800, 600);
+        reset_game(&mut state);
+        assert_eq!(state.max_alien_bullets, LEVELS[0].max_alien_bullets);
+    }
+
+    #[test]
+    fn advance_level_loads_max_alien_bullets_from_spec() {
+        let mut state = GameState::new(800, 600);
+        reset_game(&mut state);
+        advance_level(&mut state); // level 1
+        assert_eq!(state.max_alien_bullets, LEVELS[1].max_alien_bullets);
+    }
+
+    #[test]
+    fn fire_alien_bullet_respects_max_alien_bullets_from_state() {
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        state.max_alien_bullets = 2;
+        for _ in 0..3 {
+            fire_alien_bullet(&mut state, 0, 0.0, 0.0);
+        }
+        assert_eq!(state.alien_bullets.len(), 2);
+    }
+
+    #[test]
     fn level_spec_level1_has_fire_interval() {
         // LevelSpec carries an alien_fire_interval field
         assert!(LEVELS[0].alien_fire_interval > 0);
@@ -1956,7 +2009,11 @@ pub struct LevelSpec {
     pub ufo_first_shot: u32,
     /// Player shots between subsequent UFOs.
     pub ufo_repeat_shots: u32,
+    /// Maximum alien bullets in flight simultaneously.
+    pub max_alien_bullets: usize,
 }
+
+// ── Alien grid patterns ───────────────────────────────────────────────────────
 
 pub const LEVEL_1: LevelPattern = &[
     "SSSSSSSSSSS",
@@ -1982,8 +2039,42 @@ pub const LEVEL_3: LevelPattern = &[
     "OOOOOOOOOOO",
 ];
 
+// Levels 4–7: alternating rows introduce visual variety while escalating type mix.
+pub const LEVEL_4: LevelPattern = &[
+    "SSSSSSSSSSS",
+    "SSSSSSSSSSS",
+    "SSSSSSSSSSS",
+    "CCCCCCCCCCC",
+    "CCCCCCCCCCC",
+];
+
+pub const LEVEL_5: LevelPattern = &[
+    "SSSSSSSSSSS",
+    "CSCSCSCSCSC",
+    "SSSSSSSSSSS",
+    "CSCSCSCSCSC",
+    "SSSSSSSSSSS",
+];
+
+pub const LEVEL_6: LevelPattern = &[
+    "SSSSSSSSSSS",
+    "SSSSSSSSSSS",
+    "SCSCSCSCSCS",
+    "SSSSSSSSSSS",
+    "SSSSSSSSSSS",
+];
+
+pub const LEVEL_7: LevelPattern = &[
+    "SSSSSSSSSSS",
+    "SSSSSSSSSSS",
+    "SSSSSSSSSSS",
+    "SSSSSSSSSSS",
+    "CCCCCCCCCCC",
+];
+
 /// All levels in order. `advance_level` cycles through these and wraps back to 0.
 pub const LEVELS: &[LevelSpec] = &[
+    // ── Level 1 — introductory ────────────────────────────────────────────────
     LevelSpec {
         pattern: LEVEL_1,
         alien_fire_interval: 90,
@@ -1991,7 +2082,9 @@ pub const LEVELS: &[LevelSpec] = &[
         grid_y_offset: 0.0,
         ufo_first_shot: 23,
         ufo_repeat_shots: 15,
+        max_alien_bullets: 3,
     },
+    // ── Level 2 ───────────────────────────────────────────────────────────────
     LevelSpec {
         pattern: LEVEL_2,
         alien_fire_interval: 65,
@@ -1999,7 +2092,9 @@ pub const LEVELS: &[LevelSpec] = &[
         grid_y_offset: CELL_H,
         ufo_first_shot: 20,
         ufo_repeat_shots: 12,
+        max_alien_bullets: 3,
     },
+    // ── Level 3 ───────────────────────────────────────────────────────────────
     LevelSpec {
         pattern: LEVEL_3,
         alien_fire_interval: 45,
@@ -2007,6 +2102,77 @@ pub const LEVELS: &[LevelSpec] = &[
         grid_y_offset: CELL_H * 2.0,
         ufo_first_shot: 15,
         ufo_repeat_shots: 10,
+        max_alien_bullets: 3,
+    },
+    // ── Level 4 — multi-bullet unlocks ────────────────────────────────────────
+    LevelSpec {
+        pattern: LEVEL_4,
+        alien_fire_interval: 38,
+        speed_scale: 0.50,
+        grid_y_offset: CELL_H * 2.0,
+        ufo_first_shot: 12,
+        ufo_repeat_shots: 8,
+        max_alien_bullets: 4,
+    },
+    // ── Level 5 ───────────────────────────────────────────────────────────────
+    LevelSpec {
+        pattern: LEVEL_5,
+        alien_fire_interval: 32,
+        speed_scale: 0.45,
+        grid_y_offset: CELL_H * 3.0,
+        ufo_first_shot: 10,
+        ufo_repeat_shots: 7,
+        max_alien_bullets: 4,
+    },
+    // ── Level 6 ───────────────────────────────────────────────────────────────
+    LevelSpec {
+        pattern: LEVEL_6,
+        alien_fire_interval: 27,
+        speed_scale: 0.40,
+        grid_y_offset: CELL_H * 3.0,
+        ufo_first_shot: 8,
+        ufo_repeat_shots: 6,
+        max_alien_bullets: 5,
+    },
+    // ── Level 7 ───────────────────────────────────────────────────────────────
+    LevelSpec {
+        pattern: LEVEL_7,
+        alien_fire_interval: 23,
+        speed_scale: 0.36,
+        grid_y_offset: CELL_H * 4.0,
+        ufo_first_shot: 7,
+        ufo_repeat_shots: 5,
+        max_alien_bullets: 5,
+    },
+    // ── Level 8 ───────────────────────────────────────────────────────────────
+    LevelSpec {
+        pattern: LEVEL_6,
+        alien_fire_interval: 20,
+        speed_scale: 0.32,
+        grid_y_offset: CELL_H * 4.0,
+        ufo_first_shot: 6,
+        ufo_repeat_shots: 4,
+        max_alien_bullets: 6,
+    },
+    // ── Level 9 ───────────────────────────────────────────────────────────────
+    LevelSpec {
+        pattern: LEVEL_7,
+        alien_fire_interval: 17,
+        speed_scale: 0.29,
+        grid_y_offset: CELL_H * 4.0,
+        ufo_first_shot: 5,
+        ufo_repeat_shots: 3,
+        max_alien_bullets: 6,
+    },
+    // ── Level 10 — maximum difficulty ────────────────────────────────────────
+    LevelSpec {
+        pattern: LEVEL_6,
+        alien_fire_interval: 15,
+        speed_scale: 0.25,
+        grid_y_offset: CELL_H * 4.0,
+        ufo_first_shot: 4,
+        ufo_repeat_shots: 3,
+        max_alien_bullets: 7,
     },
 ];
 
@@ -2027,6 +2193,7 @@ pub fn advance_level(state: &mut GameState) {
     state.ground_explosions.clear();
     state.alien_fire_interval = spec.alien_fire_interval;
     state.speed_scale = spec.speed_scale;
+    state.max_alien_bullets = spec.max_alien_bullets;
     state.ufo_shots_to_next = spec.ufo_first_shot;
     state.ufo_shot_counter = 0;
 }

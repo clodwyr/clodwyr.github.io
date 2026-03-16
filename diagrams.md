@@ -86,6 +86,7 @@ flowchart LR
 
     State -->|speed_scale| CS[ClassicSpeed\ncontrols tick_interval]
     State -->|alien_fire_interval| Loop[Game loop\nfire_alien_bullet cadence]
+    State -->|max_alien_bullets| FAB[fire_alien_bullet\ncap]
     State -->|ufo_shots_to_next| UFO[try_spawn_ufo]
 ```
 
@@ -108,19 +109,38 @@ xychart-beta
 
 ---
 
-## 5. Level Grid Patterns
+## 5. Level Grid Patterns & Difficulty Table
 
 Each cell is one alien. Row 0 is the top of the formation.
 
 ```
-Level 1                   Level 2                   Level 3
-S S S S S S S S S S S     S S S S S S S S S S S     S S S S S S S S S S S
-C C C C C C C C C C C     S S S S S S S S S S S     S S S S S S S S S S S
-C C C C C C C C C C C     C C C C C C C C C C C     S S S S S S S S S S S
-O O O O O O O O O O O     O O O O O O O O O O O     C C C C C C C C C C C
-O O O O O O O O O O O     O O O O O O O O O O O     O O O O O O O O O O O
+Level 1         Level 2         Level 3         Level 4
+S S S S S S S   S S S S S S S   S S S S S S S   S S S S S S S
+C C C C C C C   S S S S S S S   S S S S S S S   S S S S S S S
+C C C C C C C   C C C C C C C   S S S S S S S   S S S S S S S
+O O O O O O O   O O O O O O O   C C C C C C C   C C C C C C C
+O O O O O O O   O O O O O O O   O O O O O O O   C C C C C C C
 
+Level 5         Level 6         Level 7
+S S S S S S S   S S S S S S S   S S S S S S S
+C S C S C S C   S S S S S S S   S S S S S S S
+S S S S S S S   S C S C S C S   S S S S S S S
+C S C S C S C   S S S S S S S   S S S S S S S
+S S S S S S S   S S S S S S S   C C C C C C C
+
+Levels 8-10 recycle patterns 6/7/6 at maximum difficulty settings.
 S=Squid (30pts)  C=Crab (20pts)  O=Octopus (10pts)
-Grid starts at canvas top + 15%.
-Level 2 starts one row lower; Level 3 starts two rows lower.
 ```
+
+| Level | fire_interval | speed_scale | grid_y_offset | max_bullets | ufo_first |
+|-------|--------------|-------------|---------------|-------------|-----------|
+| 1     | 90           | 1.00        | 0             | 3           | 23        |
+| 2     | 65           | 0.75        | 1×CELL_H      | 3           | 20        |
+| 3     | 45           | 0.55        | 2×CELL_H      | 3           | 15        |
+| 4     | 38           | 0.50        | 2×CELL_H      | **4**       | 12        |
+| 5     | 32           | 0.45        | 3×CELL_H      | 4           | 10        |
+| 6     | 27           | 0.40        | 3×CELL_H      | **5**       | 8         |
+| 7     | 23           | 0.36        | 4×CELL_H      | 5           | 7         |
+| 8     | 20           | 0.32        | 4×CELL_H      | **6**       | 6         |
+| 9     | 17           | 0.29        | 4×CELL_H      | 6           | 5         |
+| 10    | 15           | 0.25        | 4×CELL_H      | **7**       | 4         |
