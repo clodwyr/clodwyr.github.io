@@ -38,6 +38,19 @@ impl AlienKind {
             AlienKind::Octopus => &BULLET_PROFILE_OCTOPUS,
         }
     }
+
+    /// Returns the (width, height) of the drawn sprite in pixels.
+    /// Matches the renderer's `natural_size − 8` logic applied to the trimmed sprites:
+    ///   Crab:    14×8 art × scale 4 → 56×32px − 8 = 48×24
+    ///   Squid:    8×8 art × scale 5 → 40×40px − 8 = 32×32
+    ///   Octopus: 12×8 art × scale 5 → 60×40px − 8 = 52×32
+    pub fn hit_box_size(&self) -> (f64, f64) {
+        match self {
+            AlienKind::Crab    => (48.0, 24.0),
+            AlienKind::Squid   => (32.0, 32.0),
+            AlienKind::Octopus => (52.0, 32.0),
+        }
+    }
 }
 
 pub struct Ship {
@@ -216,6 +229,10 @@ pub const SHIP_STEP: f64 = 4.0;
 /// How many pixels the bullet travels upward per frame — easy to tune.
 pub const BULLET_STEP: f64 = 14.0;
 
+/// Extra pixels added to each horizontal side of the alien hit box when testing
+/// a player bullet. Increase to make hitting easier; set to 0 for pixel-perfect.
+pub const BULLET_HIT_MARGIN: f64 = 2.0;
+
 /// Half the ship sprite width, used for boundary clamping.
 /// Ship sprite is 55px wide drawn at natural size; half = 27.5.
 pub const SHIP_HALF_W: f64 = 27.5;
@@ -340,12 +357,15 @@ pub fn check_bullet_hit(state: &mut GameState, grid_left: f64, grid_top: f64) {
     };
 
     for alien in state.aliens.iter_mut().filter(|a| a.alive) {
-        let left   = grid_left + alien.col as f64 * CELL_W;
-        let right  = left + CELL_W;
-        let top    = grid_top  + alien.row as f64 * CELL_H;
-        let bottom = top + CELL_H;
+        let (hit_w, hit_h) = alien.sprite.hit_box_size();
+        let cell_left = grid_left + alien.col as f64 * CELL_W;
+        let cell_top  = grid_top  + alien.row as f64 * CELL_H;
+        let left   = cell_left + (CELL_W - hit_w) / 2.0;
+        let right  = left + hit_w;
+        let top    = cell_top  + (CELL_H - hit_h) / 2.0;
+        let bottom = top + hit_h;
 
-        if bx >= left && bx < right && by >= top && by < bottom {
+        if bx >= left - BULLET_HIT_MARGIN && bx < right + BULLET_HIT_MARGIN && by >= top && by < bottom {
             alien.alive = false;
             alien.explosion_timer = EXPLOSION_FRAMES;
             state.bullet = None;
@@ -947,6 +967,52 @@ mod tests {
         check_bullet_hit(&mut state, 0.0, 0.0);
         let dead: Vec<_> = state.aliens.iter().filter(|a| !a.alive).collect();
         assert_eq!(dead.len(), 1);
+    }
+
+    // ── Hit box size tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn crab_hit_box_size_returns_correct_dimensions() {
+        let (w, h) = AlienKind::Crab.hit_box_size();
+        assert_eq!(w, 48.0); // 56px sprite − 8px renderer margin
+        assert_eq!(h, 24.0); // 32px sprite − 8px renderer margin
+    }
+
+    #[test]
+    fn squid_hit_box_size_returns_correct_dimensions() {
+        let (w, h) = AlienKind::Squid.hit_box_size();
+        assert_eq!(w, 32.0); // 40px sprite − 8px renderer margin
+        assert_eq!(h, 32.0); // 40px sprite − 8px renderer margin
+    }
+
+    #[test]
+    fn octopus_hit_box_size_returns_correct_dimensions() {
+        let (w, h) = AlienKind::Octopus.hit_box_size();
+        assert_eq!(w, 52.0); // 60px sprite − 8px renderer margin
+        assert_eq!(h, 32.0); // 40px sprite − 8px renderer margin
+    }
+
+    #[test]
+    fn bullet_misses_squid_at_cell_left_edge() {
+        // Squid at col 0 row 0, grid at (0,0).
+        // After hit-box tightening: hit_box left = (CELL_W − 32) / 2 = 16.
+        // A bullet at x=0 is within the cell but outside the drawn sprite + margin.
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        state.bullet = Some(Bullet { x: 0.0, y: CELL_H / 2.0 });
+        check_bullet_hit(&mut state, 0.0, 0.0);
+        assert!(state.aliens.iter().find(|a| a.row == 0 && a.col == 0).unwrap().alive);
+    }
+
+    #[test]
+    fn bullet_within_margin_of_hit_box_edge_hits_alien() {
+        // Squid at col 0 row 0. Hit box left = (CELL_W − 32) / 2 = 16.
+        // Bullet at x=15 is 1px outside — within BULLET_HIT_MARGIN, so should hit.
+        let mut state = GameState::new(800, 600);
+        state.aliens = build_alien_grid(LEVEL_1);
+        state.bullet = Some(Bullet { x: 15.0, y: CELL_H / 2.0 });
+        check_bullet_hit(&mut state, 0.0, 0.0);
+        assert!(!state.aliens.iter().find(|a| a.row == 0 && a.col == 0).unwrap().alive);
     }
 
     // ── Alien shooting tests ──────────────────────────────────────────────────
