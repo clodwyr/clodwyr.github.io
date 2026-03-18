@@ -282,9 +282,11 @@ fn start_loop(
                 check_invasion(&mut s, grid_top);
                 check_level_clear(&mut s);
             }
-            // UFO flyby sound — start/stop continuous tone as UFO appears/disappears
+            // UFO flyby sound — start/stop continuous tone as UFO appears/disappears.
+            // Also stop immediately on game over so no sound plays during the game-over screen.
             {
-                let ufo_now_active = s.ufo.as_ref().map(|u| u.explosion_timer == 0).unwrap_or(false);
+                let ufo_now_active = s.ufo.as_ref().map(|u| u.explosion_timer == 0).unwrap_or(false)
+                    && s.phase != GamePhase::GameOver;
                 if ufo_now_active && !ufo_sound_active {
                     if let Some(ref mut snd) = sound { snd.start_ufo_sound(); }
                     ufo_sound_active = true;

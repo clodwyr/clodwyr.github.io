@@ -547,7 +547,7 @@ pub fn try_spawn_ufo(state: &mut GameState, direction: i8, canvas_w: f64, ufo_y:
 /// Removes the UFO once it exits the canvas or its explosion timer reaches zero.
 pub fn tick_ufo(state: &mut GameState, canvas_w: f64) {
     if state.phase == GamePhase::Paused { return; }
-    let evacuating = all_aliens_dead(state);
+    let evacuating = all_aliens_dead(state) || state.phase == GamePhase::GameOver;
     let done = match state.ufo {
         None => return,
         Some(ref mut u) => {
@@ -1975,6 +1975,18 @@ mod tests {
         let mut state = GameState::new(800, 600);
         state.phase = GamePhase::Playing;
         for a in &mut state.aliens { a.alive = false; }
+        state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
+        tick_ufo(&mut state, 800.0);
+        assert!(state.ufo.as_ref().unwrap().x > 100.0 + UFO_STEP);
+    }
+
+    #[test]
+    fn tick_ufo_evacuates_faster_on_game_over() {
+        // UFO on screen with aliens still alive — GameOver phase alone should trigger evacuation.
+        // (Using a full live grid so all_aliens_dead is false, isolating the GameOver condition.)
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::GameOver;
+        state.aliens = build_alien_grid(LEVEL_1); // all alive → all_aliens_dead is false
         state.ufo = Some(Ufo { x: 100.0, y: UFO_Y, direction: 1, explosion_timer: 0, score: 0 });
         tick_ufo(&mut state, 800.0);
         assert!(state.ufo.as_ref().unwrap().x > 100.0 + UFO_STEP);
