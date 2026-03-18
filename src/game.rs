@@ -121,6 +121,10 @@ pub enum GamePhase {
     Paused,
     LevelClear,
     GameOver,
+    /// Player is typing their name after a game ends.
+    NameEntry,
+    /// Player is viewing the high score table from the attract screen.
+    Scoreboard,
 }
 
 pub struct GameState {
@@ -153,6 +157,8 @@ pub struct GameState {
     pub speed_scale: f64,
     /// Maximum alien bullets in flight simultaneously (from LevelSpec).
     pub max_alien_bullets: usize,
+    /// Name being typed during the NameEntry phase.
+    pub name_input: String,
 }
 
 impl GameState {
@@ -178,6 +184,7 @@ impl GameState {
             alien_fire_interval: LEVELS[0].alien_fire_interval,
             speed_scale: LEVELS[0].speed_scale,
             max_alien_bullets: LEVELS[0].max_alien_bullets,
+            name_input: String::new(),
         }
     }
 }
@@ -522,6 +529,7 @@ pub fn reset_game(state: &mut GameState) {
     state.alien_fire_interval = spec.alien_fire_interval;
     state.speed_scale = spec.speed_scale;
     state.max_alien_bullets = spec.max_alien_bullets;
+    state.name_input.clear();
 }
 
 // ── UFO ───────────────────────────────────────────────────────────────────────
@@ -612,6 +620,104 @@ pub fn tick_level_clear(state: &mut GameState) {
     if state.pause_timer >= LEVEL_CLEAR_PAUSE {
         advance_level(state);
         state.phase = GamePhase::Playing;
+    }
+}
+
+// ── Scoreboard ────────────────────────────────────────────────────────────────
+
+/// Maximum characters in a player name.
+pub const MAX_NAME_LEN: usize = 10;
+/// Number of entries the high score table retains.
+pub const MAX_SCOREBOARD_ENTRIES: usize = 5;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScoreEntry {
+    pub name: String,
+    pub score: u32,
+    /// 1-indexed level reached (ready to display).
+    pub level: u32,
+}
+
+pub struct Scoreboard {
+    entries: Vec<ScoreEntry>,
+}
+
+impl Scoreboard {
+    pub fn new() -> Self {
+        Scoreboard { entries: Vec::new() }
+    }
+
+    pub fn entries(&self) -> &[ScoreEntry] {
+        &self.entries
+    }
+
+    /// Insert an entry if there is room or the score beats the current minimum.
+    /// Returns `true` if the entry was added.
+    pub fn insert(&mut self, entry: ScoreEntry) -> bool {
+        let qualifies = self.entries.len() < MAX_SCOREBOARD_ENTRIES
+            || entry.score > self.entries.last().map(|e| e.score).unwrap_or(0);
+        if qualifies {
+            self.entries.push(entry);
+            self.entries.sort_by(|a, b| b.score.cmp(&a.score));
+            self.entries.truncate(MAX_SCOREBOARD_ENTRIES);
+        }
+        qualifies
+    }
+}
+
+// ── Name entry ────────────────────────────────────────────────────────────────
+
+/// Transition from GameOver into NameEntry, clearing any previous buffer.
+pub fn begin_name_entry(state: &mut GameState) {
+    state.name_input.clear();
+    state.phase = GamePhase::NameEntry;
+}
+
+/// Append a printable ASCII character to the name buffer (up to MAX_NAME_LEN).
+/// Does nothing outside NameEntry phase.
+pub fn handle_name_char(state: &mut GameState, ch: char) {
+    if state.phase != GamePhase::NameEntry { return; }
+    if state.name_input.len() < MAX_NAME_LEN && ch.is_ascii_graphic() {
+        state.name_input.push(ch);
+    }
+}
+
+/// Remove the last character from the name buffer.
+/// Does nothing on an empty buffer or outside NameEntry phase.
+pub fn handle_name_backspace(state: &mut GameState) {
+    if state.phase != GamePhase::NameEntry { return; }
+    state.name_input.pop();
+}
+
+/// Confirm name entry. Returns `Some(ScoreEntry)` if the name is non-empty,
+/// `None` if the player skipped. Always transitions to the Attract phase.
+pub fn submit_name(state: &mut GameState) -> Option<ScoreEntry> {
+    let entry = if state.name_input.is_empty() {
+        None
+    } else {
+        Some(ScoreEntry {
+            name: state.name_input.clone(),
+            score: state.score,
+            level: state.level as u32 + 1,
+        })
+    };
+    state.phase = GamePhase::Attract;
+    entry
+}
+
+// ── Scoreboard navigation ─────────────────────────────────────────────────────
+
+/// Open the scoreboard from the Attract screen. Does nothing in other phases.
+pub fn open_scoreboard(state: &mut GameState) {
+    if state.phase == GamePhase::Attract {
+        state.phase = GamePhase::Scoreboard;
+    }
+}
+
+/// Return to the Attract screen from the Scoreboard. Does nothing in other phases.
+pub fn close_scoreboard(state: &mut GameState) {
+    if state.phase == GamePhase::Scoreboard {
+        state.phase = GamePhase::Attract;
     }
 }
 
@@ -2065,6 +2171,200 @@ mod tests {
         assert!(state.ufo.is_none());
         assert_eq!(state.ufo_shot_counter, 0);
         assert_eq!(state.ufo_shots_to_next, UFO_FIRST_SHOT);
+    }
+
+    // ── Scoreboard and name-entry tests ──────────────────────────────────────
+
+    #[test]
+    fn name_entry_phase_exists() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::NameEntry;
+        assert_eq!(state.phase, GamePhase::NameEntry);
+    }
+
+    #[test]
+    fn scoreboard_phase_exists() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Scoreboard;
+        assert_eq!(state.phase, GamePhase::Scoreboard);
+    }
+
+    #[test]
+    fn game_state_has_name_input() {
+        assert!(GameState::new(800, 600).name_input.is_empty());
+    }
+
+    #[test]
+    fn begin_name_entry_transitions_from_game_over() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::GameOver;
+        begin_name_entry(&mut state);
+        assert_eq!(state.phase, GamePhase::NameEntry);
+    }
+
+    #[test]
+    fn begin_name_entry_clears_buffer() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::GameOver;
+        state.name_input = "ALICE".to_string();
+        begin_name_entry(&mut state);
+        assert!(state.name_input.is_empty());
+    }
+
+    #[test]
+    fn handle_name_char_appends_to_buffer() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::NameEntry;
+        handle_name_char(&mut state, 'A');
+        assert_eq!(state.name_input, "A");
+    }
+
+    #[test]
+    fn handle_name_char_ignores_input_at_max_length() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::NameEntry;
+        for _ in 0..MAX_NAME_LEN { handle_name_char(&mut state, 'A'); }
+        handle_name_char(&mut state, 'Z');
+        assert_eq!(state.name_input.len(), MAX_NAME_LEN);
+    }
+
+    #[test]
+    fn handle_name_backspace_removes_last_char() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::NameEntry;
+        state.name_input = "AB".to_string();
+        handle_name_backspace(&mut state);
+        assert_eq!(state.name_input, "A");
+    }
+
+    #[test]
+    fn handle_name_backspace_does_nothing_on_empty() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::NameEntry;
+        handle_name_backspace(&mut state);
+        assert!(state.name_input.is_empty());
+    }
+
+    #[test]
+    fn submit_name_with_name_returns_entry_with_score_and_level() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::NameEntry;
+        state.name_input = "ACE".to_string();
+        state.score = 42;
+        state.level = 2;
+        let entry = submit_name(&mut state).unwrap();
+        assert_eq!(entry.name, "ACE");
+        assert_eq!(entry.score, 42);
+        assert_eq!(entry.level, 3); // stored as 1-indexed for display
+    }
+
+    #[test]
+    fn submit_name_transitions_to_attract() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::NameEntry;
+        submit_name(&mut state);
+        assert_eq!(state.phase, GamePhase::Attract);
+    }
+
+    #[test]
+    fn submit_name_with_empty_name_returns_none() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::NameEntry;
+        assert!(submit_name(&mut state).is_none());
+    }
+
+    #[test]
+    fn open_scoreboard_transitions_from_attract() {
+        let mut state = GameState::new(800, 600);
+        open_scoreboard(&mut state); // starts in Attract
+        assert_eq!(state.phase, GamePhase::Scoreboard);
+    }
+
+    #[test]
+    fn open_scoreboard_does_nothing_outside_attract() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
+        open_scoreboard(&mut state);
+        assert_eq!(state.phase, GamePhase::Playing);
+    }
+
+    #[test]
+    fn close_scoreboard_transitions_to_attract() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Scoreboard;
+        close_scoreboard(&mut state);
+        assert_eq!(state.phase, GamePhase::Attract);
+    }
+
+    #[test]
+    fn close_scoreboard_does_nothing_outside_scoreboard() {
+        let mut state = GameState::new(800, 600);
+        state.phase = GamePhase::Playing;
+        close_scoreboard(&mut state);
+        assert_eq!(state.phase, GamePhase::Playing);
+    }
+
+    #[test]
+    fn scoreboard_starts_empty() {
+        assert!(Scoreboard::new().entries().is_empty());
+    }
+
+    #[test]
+    fn scoreboard_insert_adds_entry() {
+        let mut board = Scoreboard::new();
+        board.insert(ScoreEntry { name: "A".into(), score: 10, level: 1 });
+        assert_eq!(board.entries().len(), 1);
+    }
+
+    #[test]
+    fn scoreboard_keeps_top_five_only() {
+        let mut board = Scoreboard::new();
+        for i in 0..6u32 {
+            board.insert(ScoreEntry { name: "X".into(), score: i * 10, level: 1 });
+        }
+        assert_eq!(board.entries().len(), MAX_SCOREBOARD_ENTRIES);
+    }
+
+    #[test]
+    fn scoreboard_entries_sorted_by_score_descending() {
+        let mut board = Scoreboard::new();
+        board.insert(ScoreEntry { name: "A".into(), score: 10, level: 1 });
+        board.insert(ScoreEntry { name: "B".into(), score: 30, level: 1 });
+        board.insert(ScoreEntry { name: "C".into(), score: 20, level: 1 });
+        let scores: Vec<u32> = board.entries().iter().map(|e| e.score).collect();
+        assert_eq!(scores, vec![30, 20, 10]);
+    }
+
+    #[test]
+    fn scoreboard_rejects_low_score_when_full() {
+        let mut board = Scoreboard::new();
+        for i in 1..=5u32 {
+            board.insert(ScoreEntry { name: "X".into(), score: i * 10, level: 1 });
+        }
+        let inserted = board.insert(ScoreEntry { name: "Y".into(), score: 5, level: 1 });
+        assert!(!inserted);
+        assert_eq!(board.entries().len(), MAX_SCOREBOARD_ENTRIES);
+        assert!(board.entries().iter().all(|e| e.score > 5));
+    }
+
+    #[test]
+    fn scoreboard_accepts_qualifying_score_when_full() {
+        let mut board = Scoreboard::new();
+        for i in 1..=5u32 {
+            board.insert(ScoreEntry { name: "X".into(), score: i * 10, level: 1 });
+        }
+        // Minimum is 10, score 15 should push it in and drop score 10.
+        let inserted = board.insert(ScoreEntry { name: "Y".into(), score: 15, level: 1 });
+        assert!(inserted);
+        assert_eq!(board.entries().len(), MAX_SCOREBOARD_ENTRIES);
+        assert!(board.entries().iter().any(|e| e.name == "Y"));
+    }
+
+    #[test]
+    fn scoreboard_insert_returns_true_when_under_capacity() {
+        let mut board = Scoreboard::new();
+        let inserted = board.insert(ScoreEntry { name: "A".into(), score: 10, level: 1 });
+        assert!(inserted);
     }
 }
 

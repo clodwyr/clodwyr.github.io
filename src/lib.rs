@@ -4,13 +4,15 @@ pub mod sound;
 use sound::SoundEngine;
 
 use game::{
-    check_alien_hit_ship, check_bullet_hit, check_invasion, check_level_clear, check_ufo_hit,
-    fire, fire_alien_bullet, move_ship, pause_game, quit_game, reset_game, step_alien_bullets,
-    step_bullet, step_grid, tick_explosions, tick_game_over, tick_ground_explosions,
-    tick_level_clear, tick_ufo, try_spawn_ufo, AlienKind, ClassicSpeed, CrispMovement,
-    Direction, GamePhase, GameState, SpeedStrategy,
-    CELL_H, CELL_W, GAME_OVER_PAUSE, GRID_COLS, GRID_W, PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP,
-    UFO_H, UFO_SCORES, UFO_W,
+    begin_name_entry, check_alien_hit_ship, check_bullet_hit, check_invasion, check_level_clear,
+    check_ufo_hit, close_scoreboard, fire, fire_alien_bullet, handle_name_backspace,
+    handle_name_char, move_ship, open_scoreboard, pause_game, quit_game, reset_game,
+    step_alien_bullets, step_bullet, step_grid, submit_name, tick_explosions, tick_game_over,
+    tick_ground_explosions, tick_level_clear, tick_ufo, try_spawn_ufo,
+    AlienKind, ClassicSpeed, CrispMovement, Direction, GamePhase, GameState, Scoreboard,
+    ScoreEntry, SpeedStrategy,
+    CELL_H, CELL_W, GAME_OVER_PAUSE, GRID_COLS, GRID_W, MAX_NAME_LEN,
+    PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP, UFO_H, UFO_SCORES, UFO_W,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -51,13 +53,18 @@ pub fn start() {
     ));
     // Key state: which keys are currently held
     let keys: Rc<RefCell<HashMap<String, bool>>> = Rc::new(RefCell::new(HashMap::new()));
+    // Queue of raw key strings from keydown events — drained each frame for text input.
+    let typed_chars: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 
     // ── Keyboard listeners ────────────────────────────────────────────────────
 
     {
-        let keys_down = keys.clone();
+        let keys_down   = keys.clone();
+        let typed_down  = typed_chars.clone();
         let on_keydown = Closure::<dyn FnMut(_)>::new(move |e: KeyboardEvent| {
-            keys_down.borrow_mut().insert(e.key(), true);
+            let key = e.key();
+            keys_down.borrow_mut().insert(key.clone(), true);
+            typed_down.borrow_mut().push(key);
         });
         document
             .add_event_listener_with_callback("keydown", on_keydown.as_ref().unchecked_ref())
@@ -92,6 +99,7 @@ pub fn start() {
         let state_c   = state.clone();
         let sprites_c = sprites.clone();
         let keys_c    = keys.clone();
+        let typed_c   = typed_chars.clone();
         let loaded_c  = loaded.clone();
 
         let onload = Closure::wrap(Box::new(move || {
@@ -102,6 +110,7 @@ pub fn start() {
                     state_c.clone(),
                     sprites_c.clone(),
                     keys_c.clone(),
+                    typed_c.clone(),
                     viewport_w,
                     viewport_h,
                 );
@@ -122,6 +131,7 @@ fn start_loop(
     state: Rc<RefCell<GameState>>,
     sprites: Rc<RefCell<HashMap<&'static str, HtmlImageElement>>>,
     keys: Rc<RefCell<HashMap<String, bool>>>,
+    typed_chars: Rc<RefCell<Vec<String>>>,
     viewport_w: f64,
     viewport_h: f64,
 ) {
@@ -143,10 +153,14 @@ fn start_loop(
     // Frame counter — used as a cheap pseudo-random column selector.
     let frame: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
 
+    // Persistent high score table — loaded from localStorage on startup.
+    let mut scoreboard = load_scoreboard();
+
     // Track prior-frame key state for rising-edge (fresh-press) detection.
     let mut space_was_held = false;
     let mut p_was_held = false;
     let mut q_was_held = false;
+    let mut h_was_held = false;
     let mut s_was_held = false;
 
     // Sound engine — created here, resumed on first Space press (autoplay policy).
@@ -165,14 +179,17 @@ fn start_loop(
             let p_now     = keys.borrow().contains_key("p") || keys.borrow().contains_key("P");
             let q_now     = keys.borrow().contains_key("q") || keys.borrow().contains_key("Q");
             let s_now     = keys.borrow().contains_key("s") || keys.borrow().contains_key("S");
+            let h_now     = keys.borrow().contains_key("h") || keys.borrow().contains_key("H");
             let space_just_pressed = space_now && !space_was_held;
             let p_just_pressed     = p_now && !p_was_held;
             let q_just_pressed     = q_now && !q_was_held;
             let s_just_pressed     = s_now && !s_was_held;
+            let h_just_pressed     = h_now && !h_was_held;
             space_was_held = space_now;
             p_was_held = p_now;
             q_was_held = q_now;
             s_was_held = s_now;
+            h_was_held = h_now;
 
             if space_just_pressed {
                 // Resume AudioContext on first user gesture (browser autoplay policy).
@@ -182,10 +199,18 @@ fn start_loop(
                 }
                 match s.phase {
                     GamePhase::Attract => reset_game(&mut s),
-                    // Only allow restart once the game-over message has been visible long enough
+                    // After the game-over message, move to name entry rather than
+                    // restarting directly so the player can save their score.
                     GamePhase::GameOver if s.game_over_timer >= GAME_OVER_PAUSE => {
-                        reset_game(&mut s);
+                        begin_name_entry(&mut s);
                     }
+                    _ => {}
+                }
+            }
+            if h_just_pressed {
+                match s.phase {
+                    GamePhase::Attract    => open_scoreboard(&mut s),
+                    GamePhase::Scoreboard => close_scoreboard(&mut s),
                     _ => {}
                 }
             }
@@ -282,6 +307,37 @@ fn start_loop(
                 check_invasion(&mut s, grid_top);
                 check_level_clear(&mut s);
             }
+            // ── Name entry ────────────────────────────────────────────────────
+            {
+                let chars: Vec<String> = typed_chars.borrow_mut().drain(..).collect();
+                if s.phase == GamePhase::NameEntry {
+                    for key in chars {
+                        match key.as_str() {
+                            "Enter" => {
+                                if let Some(entry) = submit_name(&mut s) {
+                                    scoreboard.insert(entry);
+                                    save_scoreboard(&scoreboard);
+                                }
+                                // submit_name transitions to Attract whether name given or not
+                            }
+                            "Escape" => {
+                                // Skip without saving — clear buffer then submit
+                                s.name_input.clear();
+                                submit_name(&mut s);
+                            }
+                            "Backspace" => handle_name_backspace(&mut s),
+                            k if k.len() == 1 => {
+                                if let Some(ch) = k.chars().next() {
+                                    handle_name_char(&mut s, ch.to_ascii_uppercase());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                // Outside NameEntry, discard queued chars so they don't accumulate.
+            }
+
             // UFO flyby sound — start/stop continuous tone as UFO appears/disappears.
             // Also stop immediately on game over so no sound plays during the game-over screen.
             {
@@ -305,7 +361,7 @@ fn start_loop(
 
         // ── Draw ──────────────────────────────────────────────────────────────
         context.clear_rect(0.0, 0.0, viewport_w, viewport_h);
-        draw_scene(&context, &state.borrow(), &sprites.borrow(), viewport_w, viewport_h);
+        draw_scene(&context, &state.borrow(), &sprites.borrow(), &scoreboard, viewport_w, viewport_h);
 
         // Schedule next frame
         web_sys::window()
@@ -325,12 +381,45 @@ fn start_loop(
         .unwrap();
 }
 
+// ── Scoreboard persistence ────────────────────────────────────────────────────
+
+fn get_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+fn save_scoreboard(board: &Scoreboard) {
+    let Some(storage) = get_storage() else { return };
+    let data: String = board
+        .entries()
+        .iter()
+        .map(|e| format!("{}\t{}\t{}", e.name, e.score, e.level))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = storage.set_item("si_scores", &data);
+}
+
+fn load_scoreboard() -> Scoreboard {
+    let mut board = Scoreboard::new();
+    let Some(storage) = get_storage() else { return board };
+    let Ok(Some(data)) = storage.get_item("si_scores") else { return board };
+    for line in data.lines() {
+        let parts: Vec<&str> = line.splitn(3, '\t').collect();
+        if parts.len() == 3 {
+            if let (Ok(score), Ok(level)) = (parts[1].parse::<u32>(), parts[2].parse::<u32>()) {
+                board.insert(ScoreEntry { name: parts[0].to_string(), score, level });
+            }
+        }
+    }
+    board
+}
+
 // ── Scene renderer ────────────────────────────────────────────────────────────
 
 fn draw_scene(
     ctx: &CanvasRenderingContext2d,
     state: &GameState,
     sprites: &HashMap<&'static str, HtmlImageElement>,
+    scoreboard: &Scoreboard,
     viewport_w: f64,
     viewport_h: f64,
 ) {
@@ -423,7 +512,9 @@ fn draw_scene(
         ctx.fill_text("SPACE INVADERS", viewport_w / 2.0, viewport_h / 2.0 - 40.0)
             .expect("fill_text failed");
         ctx.set_font("bold 24px monospace");
-        ctx.fill_text("PRESS SPACE TO START", viewport_w / 2.0, viewport_h / 2.0 + 30.0)
+        ctx.fill_text("SPACE — START", viewport_w / 2.0, viewport_h / 2.0 + 30.0)
+            .expect("fill_text failed");
+        ctx.fill_text("H — HIGH SCORES", viewport_w / 2.0, viewport_h / 2.0 + 66.0)
             .expect("fill_text failed");
     }
 
@@ -459,7 +550,6 @@ fn draw_scene(
         ctx.set_fill_style_str("#68fb35");
         ctx.set_text_align("center");
         let mid_y = if state.game_over_timer >= GAME_OVER_PAUSE {
-            // Shift "GAME OVER" up to make room for the prompt below
             viewport_h / 2.0 - 40.0
         } else {
             viewport_h / 2.0
@@ -469,9 +559,84 @@ fn draw_scene(
             .expect("fill_text failed");
         if state.game_over_timer >= GAME_OVER_PAUSE {
             ctx.set_font("bold 24px monospace");
-            ctx.fill_text("PRESS SPACE TO PLAY AGAIN", viewport_w / 2.0, mid_y + 70.0)
+            ctx.fill_text("PRESS SPACE TO CONTINUE", viewport_w / 2.0, mid_y + 70.0)
                 .expect("fill_text failed");
         }
+    }
+
+    // Name entry overlay
+    if state.phase == GamePhase::NameEntry {
+        ctx.set_fill_style_str("rgba(0,0,0,0.80)");
+        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.set_fill_style_str("#68fb35");
+        ctx.set_text_align("center");
+        let cy = viewport_h / 2.0;
+        ctx.set_font("bold 32px monospace");
+        ctx.fill_text(
+            &format!("SCORE: {}   LEVEL: {}", state.score, state.level + 1),
+            viewport_w / 2.0, cy - 70.0,
+        ).expect("fill_text failed");
+        ctx.set_font("bold 24px monospace");
+        ctx.fill_text("ENTER YOUR NAME", viewport_w / 2.0, cy - 20.0)
+            .expect("fill_text failed");
+        // Input box
+        let cursor = if state.name_input.len() < MAX_NAME_LEN { "_" } else { "" };
+        ctx.set_font("bold 40px monospace");
+        ctx.fill_text(
+            &format!("{}{}", state.name_input, cursor),
+            viewport_w / 2.0, cy + 40.0,
+        ).expect("fill_text failed");
+        ctx.set_font("bold 18px monospace");
+        ctx.set_fill_style_str("#aaffaa");
+        ctx.fill_text(
+            "ENTER — SAVE   ESC — SKIP",
+            viewport_w / 2.0, cy + 100.0,
+        ).expect("fill_text failed");
+    }
+
+    // Scoreboard screen
+    if state.phase == GamePhase::Scoreboard {
+        ctx.set_fill_style_str("rgba(0,0,0,0.92)");
+        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.set_fill_style_str("#68fb35");
+        ctx.set_text_align("center");
+        ctx.set_font("bold 48px monospace");
+        ctx.fill_text("HIGH SCORES", viewport_w / 2.0, 80.0)
+            .expect("fill_text failed");
+
+        let cx   = viewport_w / 2.0;
+        let top  = 140.0_f64;
+        let row  = 52.0_f64;
+
+        // Header
+        ctx.set_font("bold 20px monospace");
+        ctx.set_fill_style_str("#aaffaa");
+        ctx.fill_text(
+            &format!("{:<4}  {:<6}  {:<5}  {}", "RANK", "SCORE", "LEVEL", "NAME"),
+            cx, top,
+        ).expect("fill_text failed");
+
+        ctx.set_font("bold 26px monospace");
+        ctx.set_fill_style_str("#68fb35");
+        if scoreboard.entries().is_empty() {
+            ctx.fill_text("— NO SCORES YET —", cx, top + row * 1.5)
+                .expect("fill_text failed");
+        } else {
+            for (i, entry) in scoreboard.entries().iter().enumerate() {
+                ctx.fill_text(
+                    &format!(
+                        "{:<4}  {:>6}  {:>5}  {}",
+                        i + 1, entry.score, entry.level, entry.name
+                    ),
+                    cx, top + row * (i as f64 + 1.0),
+                ).expect("fill_text failed");
+            }
+        }
+
+        ctx.set_font("bold 20px monospace");
+        ctx.set_fill_style_str("#aaffaa");
+        ctx.fill_text("H — BACK", cx, viewport_h - 40.0)
+            .expect("fill_text failed");
     }
 
     draw_hud(ctx, state, sprites, viewport_w);

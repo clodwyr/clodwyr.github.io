@@ -23,6 +23,23 @@ Never skip the red phase. Never write implementation before a test.
 Space Invaders game built in Rust, compiled to WebAssembly via Trunk.
 Deployed to GitHub Pages via GitHub Actions on push to `main`.
 
+## Pre-merge checklist
+
+Before declaring a feature ready to merge, always run:
+
+```
+cargo test
+cargo build --target wasm32-unknown-unknown
+```
+
+Both commands must complete with **zero errors and zero warnings**. In particular:
+
+- `unused import` — remove the import from the use list
+- `unused variable` — prefix with `_` or remove it
+- `dead_code` — remove the item or add `#[allow(dead_code)]` only if deliberately kept
+
+Do not suppress warnings with `#[allow(...)]` to pass the check — fix the underlying issue.
+
 ## Stack
 
 - **Rust** + **wasm-bindgen** + **web-sys**

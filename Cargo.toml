@@ -34,6 +34,7 @@ features = [
   "OscillatorNode",
   "OscillatorType",
   "GainNode",
+  "Storage",
 ]
 
 [[bin]]
