@@ -35,6 +35,16 @@ features = [
   "OscillatorType",
   "GainNode",
   "Storage",
+  # WebGL1 — CRT post-process shader layer
+  "WebGlRenderingContext",
+  "WebGlProgram",
+  "WebGlShader",
+  "WebGlBuffer",
+  "WebGlTexture",
+  "WebGlUniformLocation",
+  "CssStyleDeclaration",
+  "HtmlBodyElement",
+  "console",
 ]
 
 [[bin]]

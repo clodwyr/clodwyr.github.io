@@ -77,3 +77,7 @@ All work happens on a feature branch. The TDD cycle is:
 3. **Refactor** — clean up without breaking tests, commit
 
 Then do a visual check in the browser and squash merge into `main`.
+
+## Research 
+
+[Space Invaders Design](https://robbiegrier.github.io/assets/research/SpaceInvadersDesignDocFinal.pdf)

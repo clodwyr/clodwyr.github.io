@@ -15,10 +15,13 @@
       align-items: center;
       width: 100vw;
       height: 100vh;
+      position: relative;
     }
     canvas {
       display: block;
     }
+    /* #crt is created and styled entirely from Rust; position:relative on body
+       ensures it is positioned relative to the viewport origin. */
   </style>
 </head>
 <body>

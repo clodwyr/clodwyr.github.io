@@ -201,6 +201,16 @@ pub const GRID_H: f64 = GRID_ROWS as f64 * CELL_H;
 /// maximum distance the grid can shift before reversing. Easy to tune.
 pub const PLAY_MARGIN: f64 = 48.0;
 
+/// Fixed canonical game dimensions.  All layout, collision and ship-movement
+/// coordinates are expressed in this space, regardless of the browser window
+/// size.  The canvas fills the full viewport; the game area is centred inside
+/// it using a translate transform in the draw loop.
+///
+/// Width  = GRID_W + 2 × PLAY_MARGIN = 704 + 96 = 800
+/// Height = 600  →  grid_top ≈ 90 px, ship.y = 560 px (matches unit tests)
+pub const GAME_W: f64 = GRID_W + 2.0 * PLAY_MARGIN; // 800.0
+pub const GAME_H: f64 = 600.0;
+
 // ── Grid movement constants ───────────────────────────────────────────────────
 
 /// Pixels the grid jumps per move — larger = more visible, classic feel. Easy to tune.
@@ -649,6 +659,14 @@ impl Scoreboard {
 
     pub fn entries(&self) -> &[ScoreEntry] {
         &self.entries
+    }
+
+    /// Returns `true` if `score` would be accepted by `insert` without
+    /// mutating the board — i.e. there is still room, or the score beats the
+    /// current lowest entry.
+    pub fn qualifies(&self, score: u32) -> bool {
+        self.entries.len() < MAX_SCOREBOARD_ENTRIES
+            || score > self.entries.last().map(|e| e.score).unwrap_or(0)
     }
 
     /// Insert an entry if there is room or the score beats the current minimum.
@@ -1194,7 +1212,6 @@ mod tests {
         assert!(state.alien_bullets.is_empty());
     }
 
-    #[test]
     // ── Bullet profile tests ─────────────────────────────────────────────────
 
     #[test]
@@ -1779,7 +1796,7 @@ mod tests {
 
     #[test]
     fn alien_starts_with_no_explosion() {
-        let state = GameState::new(800, 600);
+        let _state = GameState::new(800, 600);
         let aliens = build_alien_grid(LEVEL_1);
         assert!(aliens.iter().all(|a| a.explosion_timer == 0));
     }
@@ -2310,6 +2327,42 @@ mod tests {
     }
 
     #[test]
+    fn qualifies_true_when_board_has_room() {
+        let board = Scoreboard::new();
+        assert!(board.qualifies(0), "any score qualifies on an empty board");
+    }
+
+    #[test]
+    fn qualifies_true_when_score_beats_lowest() {
+        let mut board = Scoreboard::new();
+        for i in 1..=5u32 {
+            board.insert(ScoreEntry { name: "X".into(), score: i * 10, level: 1 });
+        }
+        // Lowest entry is 10; score 11 beats it.
+        assert!(board.qualifies(11));
+    }
+
+    #[test]
+    fn qualifies_false_when_board_full_and_score_too_low() {
+        let mut board = Scoreboard::new();
+        for i in 1..=5u32 {
+            board.insert(ScoreEntry { name: "X".into(), score: i * 10, level: 1 });
+        }
+        // Lowest entry is 10; score 10 does not beat it (must be strictly greater).
+        assert!(!board.qualifies(10));
+        assert!(!board.qualifies(5));
+    }
+
+    #[test]
+    fn qualifies_does_not_mutate_board() {
+        let mut board = Scoreboard::new();
+        board.insert(ScoreEntry { name: "X".into(), score: 100, level: 1 });
+        let len_before = board.entries().len();
+        board.qualifies(999);
+        assert_eq!(board.entries().len(), len_before);
+    }
+
+    #[test]
     fn scoreboard_insert_adds_entry() {
         let mut board = Scoreboard::new();
         board.insert(ScoreEntry { name: "A".into(), score: 10, level: 1 });
@@ -2456,7 +2509,7 @@ pub const LEVELS: &[LevelSpec] = &[
     LevelSpec {
         pattern: LEVEL_1,
         alien_fire_interval: 90,
-        speed_scale: 1.00,
+        speed_scale: 1.20,
         grid_y_offset: 0.0,
         ufo_first_shot: 23,
         ufo_repeat_shots: 15,
@@ -2466,8 +2519,8 @@ pub const LEVELS: &[LevelSpec] = &[
     LevelSpec {
         pattern: LEVEL_2,
         alien_fire_interval: 65,
-        speed_scale: 0.75,
-        grid_y_offset: CELL_H,
+        speed_scale: 0.95,
+        grid_y_offset: 0.0,
         ufo_first_shot: 20,
         ufo_repeat_shots: 12,
         max_alien_bullets: 3,
@@ -2476,8 +2529,8 @@ pub const LEVELS: &[LevelSpec] = &[
     LevelSpec {
         pattern: LEVEL_3,
         alien_fire_interval: 45,
-        speed_scale: 0.55,
-        grid_y_offset: CELL_H * 2.0,
+        speed_scale: 0.80,
+        grid_y_offset: CELL_H,
         ufo_first_shot: 15,
         ufo_repeat_shots: 10,
         max_alien_bullets: 3,
@@ -2486,8 +2539,8 @@ pub const LEVELS: &[LevelSpec] = &[
     LevelSpec {
         pattern: LEVEL_4,
         alien_fire_interval: 38,
-        speed_scale: 0.50,
-        grid_y_offset: CELL_H * 2.0,
+        speed_scale: 0.70,
+        grid_y_offset: CELL_H,
         ufo_first_shot: 12,
         ufo_repeat_shots: 8,
         max_alien_bullets: 4,
@@ -2496,8 +2549,8 @@ pub const LEVELS: &[LevelSpec] = &[
     LevelSpec {
         pattern: LEVEL_5,
         alien_fire_interval: 32,
-        speed_scale: 0.45,
-        grid_y_offset: CELL_H * 3.0,
+        speed_scale: 0.60,
+        grid_y_offset: CELL_H * 2.0,
         ufo_first_shot: 10,
         ufo_repeat_shots: 7,
         max_alien_bullets: 4,
@@ -2506,8 +2559,8 @@ pub const LEVELS: &[LevelSpec] = &[
     LevelSpec {
         pattern: LEVEL_6,
         alien_fire_interval: 27,
-        speed_scale: 0.40,
-        grid_y_offset: CELL_H * 3.0,
+        speed_scale: 0.50,
+        grid_y_offset: CELL_H * 2.0,
         ufo_first_shot: 8,
         ufo_repeat_shots: 6,
         max_alien_bullets: 5,
@@ -2516,8 +2569,8 @@ pub const LEVELS: &[LevelSpec] = &[
     LevelSpec {
         pattern: LEVEL_7,
         alien_fire_interval: 23,
-        speed_scale: 0.36,
-        grid_y_offset: CELL_H * 4.0,
+        speed_scale: 0.45,
+        grid_y_offset: CELL_H * 3.0,
         ufo_first_shot: 7,
         ufo_repeat_shots: 5,
         max_alien_bullets: 5,
@@ -2526,8 +2579,8 @@ pub const LEVELS: &[LevelSpec] = &[
     LevelSpec {
         pattern: LEVEL_6,
         alien_fire_interval: 20,
-        speed_scale: 0.32,
-        grid_y_offset: CELL_H * 4.0,
+        speed_scale: 0.48,
+        grid_y_offset: CELL_H * 3.0,
         ufo_first_shot: 6,
         ufo_repeat_shots: 4,
         max_alien_bullets: 6,
@@ -2536,8 +2589,8 @@ pub const LEVELS: &[LevelSpec] = &[
     LevelSpec {
         pattern: LEVEL_7,
         alien_fire_interval: 17,
-        speed_scale: 0.29,
-        grid_y_offset: CELL_H * 4.0,
+        speed_scale: 0.36,
+        grid_y_offset: CELL_H * 3.0,
         ufo_first_shot: 5,
         ufo_repeat_shots: 3,
         max_alien_bullets: 6,
@@ -2546,7 +2599,7 @@ pub const LEVELS: &[LevelSpec] = &[
     LevelSpec {
         pattern: LEVEL_6,
         alien_fire_interval: 15,
-        speed_scale: 0.25,
+        speed_scale: 0.32,
         grid_y_offset: CELL_H * 4.0,
         ufo_first_shot: 4,
         ufo_repeat_shots: 3,

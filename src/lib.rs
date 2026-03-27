@@ -1,6 +1,8 @@
 pub mod game;
+pub mod shader;
 pub mod sound;
 
+use shader::post_processor::PostProcessor;
 use sound::SoundEngine;
 
 use game::{
@@ -11,7 +13,7 @@ use game::{
     tick_ground_explosions, tick_level_clear, tick_ufo, try_spawn_ufo,
     AlienKind, ClassicSpeed, CrispMovement, Direction, GamePhase, GameState, Scoreboard,
     ScoreEntry, SpeedStrategy,
-    CELL_H, CELL_W, GAME_OVER_PAUSE, GRID_COLS, GRID_W, MAX_NAME_LEN,
+    CELL_H, CELL_W, GAME_H, GAME_OVER_PAUSE, GAME_W, GRID_COLS, GRID_W, MAX_NAME_LEN,
     PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP, UFO_H, UFO_SCORES, UFO_W,
 };
 use std::cell::RefCell;
@@ -29,16 +31,25 @@ pub fn start() {
     let window = web_sys::window().expect("no global window");
     let document = window.document().expect("no document on window");
 
-    let canvas = document
-        .get_element_by_id("canvas")
-        .expect("no #canvas element")
-        .dyn_into::<HtmlCanvasElement>()
-        .expect("#canvas is not a canvas element");
+    let canvas = Rc::new(
+        document
+            .get_element_by_id("canvas")
+            .expect("no #canvas element")
+            .dyn_into::<HtmlCanvasElement>()
+            .expect("#canvas is not a canvas element"),
+    );
 
     let viewport_w = window.inner_width().unwrap().as_f64().unwrap();
     let viewport_h = window.inner_height().unwrap().as_f64().unwrap();
     canvas.set_width(viewport_w as u32);
     canvas.set_height(viewport_h as u32);
+
+    // Pull the game canvas out of the flex flow so it always sits at (0,0).
+    // PostProcessor will hide it once the CRT overlay is in place.
+    let cs = canvas.style();
+    cs.set_property("position", "absolute").unwrap();
+    cs.set_property("top", "0").unwrap();
+    cs.set_property("left", "0").unwrap();
 
     let context = Rc::new(
         canvas
@@ -47,9 +58,16 @@ pub fn start() {
             .expect("failed to get 2d context"),
     );
 
-    // Shared game state — populate the first level's alien grid immediately
+    let post = Rc::new(RefCell::new(
+        PostProcessor::new(&canvas).unwrap_or_else(|e| {
+            web_sys::console::error_2(&"CRT post-processor failed:".into(), &e);
+            panic!("failed to create CRT post-processor");
+        }),
+    ));
+
+    // Shared game state — always in the fixed canonical game coordinate space.
     let state = Rc::new(RefCell::new(
-        GameState::new(viewport_w as u32, viewport_h as u32)
+        GameState::new(GAME_W as u32, GAME_H as u32)
     ));
     // Key state: which keys are currently held
     let keys: Rc<RefCell<HashMap<String, bool>>> = Rc::new(RefCell::new(HashMap::new()));
@@ -96,6 +114,8 @@ pub fn start() {
         img.set_src(&format!("assets/{name}.png"));
 
         let context_c = context.clone();
+        let canvas_c  = canvas.clone();
+        let post_c    = post.clone();
         let state_c   = state.clone();
         let sprites_c = sprites.clone();
         let keys_c    = keys.clone();
@@ -107,6 +127,8 @@ pub fn start() {
             if *loaded_c.borrow() == TOTAL {
                 start_loop(
                     context_c.clone(),
+                    canvas_c.clone(),
+                    post_c.clone(),
                     state_c.clone(),
                     sprites_c.clone(),
                     keys_c.clone(),
@@ -128,6 +150,8 @@ pub fn start() {
 
 fn start_loop(
     context: Rc<CanvasRenderingContext2d>,
+    canvas: Rc<HtmlCanvasElement>,
+    post: Rc<RefCell<PostProcessor>>,
     state: Rc<RefCell<GameState>>,
     sprites: Rc<RefCell<HashMap<&'static str, HtmlImageElement>>>,
     keys: Rc<RefCell<HashMap<String, bool>>>,
@@ -144,9 +168,9 @@ fn start_loop(
     // Play area: grid centred with PLAY_MARGIN of breathing room on each side.
     // The grid shifts ±PLAY_MARGIN from centre; ship is bounded to the same area.
     let max_offset_x   = PLAY_MARGIN;
-    let base_grid_left = (viewport_w - GRID_W) / 2.0;
+    let base_grid_left = (GAME_W - GRID_W) / 2.0;
     let play_left      = base_grid_left - PLAY_MARGIN;
-    let grid_top       = viewport_h * 0.15;
+    let grid_top       = GAME_H * 0.15;
     let ship_left      = play_left + game::SHIP_HALF_W;
     let ship_right     = play_left + GRID_W + 2.0 * PLAY_MARGIN - game::SHIP_HALF_W;
 
@@ -199,10 +223,15 @@ fn start_loop(
                 }
                 match s.phase {
                     GamePhase::Attract => reset_game(&mut s),
-                    // After the game-over message, move to name entry rather than
-                    // restarting directly so the player can save their score.
+                    // After the game-over message, move to name entry only if the
+                    // score qualifies for the scoreboard; otherwise go straight to
+                    // the attract screen.
                     GamePhase::GameOver if s.game_over_timer >= GAME_OVER_PAUSE => {
-                        begin_name_entry(&mut s);
+                        if scoreboard.qualifies(s.score) {
+                            begin_name_entry(&mut s);
+                        } else {
+                            s.phase = GamePhase::Attract;
+                        }
                     }
                     _ => {}
                 }
@@ -214,13 +243,17 @@ fn start_loop(
                     _ => {}
                 }
             }
-            if p_just_pressed {
+            // P / Q / S must not fire while the player is typing a name —
+            // those letters are valid name characters and the key ends up in
+            // both `typed_chars` (name input) and `keys` (action detection).
+            let accepting_text = s.phase == GamePhase::NameEntry;
+            if p_just_pressed && !accepting_text {
                 pause_game(&mut s);
             }
-            if q_just_pressed {
+            if q_just_pressed && !accepting_text {
                 quit_game(&mut s);
             }
-            if s_just_pressed {
+            if s_just_pressed && !accepting_text {
                 if let Some(ref mut snd) = sound {
                     let now_muted = SoundEngine::toggle(&mut snd.muted);
                     // Stop UFO tone immediately on mute; restart if UFO is still flying.
@@ -249,7 +282,7 @@ fn start_loop(
                     }
                     // Try to spawn UFO with a randomly chosen direction
                     let direction = if Math::random() < 0.5 { 1i8 } else { -1i8 };
-                    try_spawn_ufo(&mut s, direction, viewport_w, grid_top);
+                    try_spawn_ufo(&mut s, direction, GAME_W, grid_top);
                 }
                 step_bullet(&mut s, grid_top);
                 // Check UFO hit — detect transition to explosion state for sound
@@ -356,12 +389,24 @@ fn start_loop(
             tick_game_over(&mut s);
             tick_explosions(&mut s);
             tick_ground_explosions(&mut s);
-            tick_ufo(&mut s, viewport_w);
+            tick_ufo(&mut s, GAME_W);
         }
 
         // ── Draw ──────────────────────────────────────────────────────────────
         context.clear_rect(0.0, 0.0, viewport_w, viewport_h);
-        draw_scene(&context, &state.borrow(), &sprites.borrow(), &scoreboard, viewport_w, viewport_h);
+        // Centre the fixed game area in the viewport.
+        let game_x = ((viewport_w - GAME_W) / 2.0).max(0.0);
+        let game_y = ((viewport_h - GAME_H) / 2.0).max(0.0);
+        context.save();
+        context.translate(game_x, game_y).unwrap();
+        draw_scene(&context, &state.borrow(), &sprites.borrow(), &scoreboard, GAME_W, GAME_H);
+        context.restore();
+
+        // ── CRT post-process ──────────────────────────────────────────────────
+        let rc = (Math::random() * 1024.0) as u32;
+        let rb = (Math::random() * 1024.0) as u32;
+        let ri = (Math::random() * 1024.0) as u32;
+        post.borrow_mut().process(&canvas, rc, rb, ri);
 
         // Schedule next frame
         web_sys::window()
@@ -420,11 +465,11 @@ fn draw_scene(
     state: &GameState,
     sprites: &HashMap<&'static str, HtmlImageElement>,
     scoreboard: &Scoreboard,
-    viewport_w: f64,
-    viewport_h: f64,
+    game_w: f64,
+    game_h: f64,
 ) {
-    let grid_left = (viewport_w - GRID_W) / 2.0 + state.grid.offset_x;
-    let grid_top  = viewport_h * 0.15 + state.grid.offset_y;
+    let grid_left = (game_w - GRID_W) / 2.0 + state.grid.offset_x;
+    let grid_top  = game_h * 0.15 + state.grid.offset_y;
 
     for alien in state.aliens.iter().filter(|a| a.alive || a.explosion_timer > 0) {
         let sprite_name = if !alien.alive {
@@ -505,61 +550,61 @@ fn draw_scene(
     // Attract screen
     if state.phase == GamePhase::Attract {
         ctx.set_fill_style_str("rgba(0,0,0,0.75)");
-        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.fill_rect(0.0, 0.0, game_w, game_h);
         ctx.set_fill_style_str("#68fb35");
         ctx.set_text_align("center");
         ctx.set_font("bold 64px monospace");
-        ctx.fill_text("SPACE INVADERS", viewport_w / 2.0, viewport_h / 2.0 - 40.0)
+        ctx.fill_text("SPACE INVADERS", game_w / 2.0, game_h / 2.0 - 40.0)
             .expect("fill_text failed");
         ctx.set_font("bold 24px monospace");
-        ctx.fill_text("SPACE — START", viewport_w / 2.0, viewport_h / 2.0 + 30.0)
+        ctx.fill_text("SPACE — START", game_w / 2.0, game_h / 2.0 + 30.0)
             .expect("fill_text failed");
-        ctx.fill_text("H — HIGH SCORES", viewport_w / 2.0, viewport_h / 2.0 + 66.0)
+        ctx.fill_text("H — HIGH SCORES", game_w / 2.0, game_h / 2.0 + 66.0)
             .expect("fill_text failed");
     }
 
     // Paused overlay
     if state.phase == GamePhase::Paused {
         ctx.set_fill_style_str("rgba(0,0,0,0.55)");
-        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.fill_rect(0.0, 0.0, game_w, game_h);
         ctx.set_fill_style_str("#68fb35");
         ctx.set_text_align("center");
         ctx.set_font("bold 64px monospace");
-        ctx.fill_text("PAUSED", viewport_w / 2.0, viewport_h / 2.0 - 20.0)
+        ctx.fill_text("PAUSED", game_w / 2.0, game_h / 2.0 - 20.0)
             .expect("fill_text failed");
         ctx.set_font("bold 20px monospace");
-        ctx.fill_text("P — RESUME   Q — QUIT", viewport_w / 2.0, viewport_h / 2.0 + 40.0)
+        ctx.fill_text("P — RESUME   Q — QUIT", game_w / 2.0, game_h / 2.0 + 40.0)
             .expect("fill_text failed");
     }
 
     // Level clear overlay
     if state.phase == GamePhase::LevelClear {
         ctx.set_fill_style_str("rgba(0,0,0,0.45)");
-        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.fill_rect(0.0, 0.0, game_w, game_h);
         ctx.set_fill_style_str("#68fb35");
         ctx.set_font("bold 64px monospace");
         ctx.set_text_align("center");
-        ctx.fill_text("LEVEL CLEAR", viewport_w / 2.0, viewport_h / 2.0)
+        ctx.fill_text("LEVEL CLEAR", game_w / 2.0, game_h / 2.0)
             .expect("fill_text failed");
     }
 
     // Game over overlay
     if state.phase == GamePhase::GameOver {
         ctx.set_fill_style_str("rgba(0,0,0,0.55)");
-        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.fill_rect(0.0, 0.0, game_w, game_h);
         ctx.set_fill_style_str("#68fb35");
         ctx.set_text_align("center");
         let mid_y = if state.game_over_timer >= GAME_OVER_PAUSE {
-            viewport_h / 2.0 - 40.0
+            game_h / 2.0 - 40.0
         } else {
-            viewport_h / 2.0
+            game_h / 2.0
         };
         ctx.set_font("bold 64px monospace");
-        ctx.fill_text("GAME OVER", viewport_w / 2.0, mid_y)
+        ctx.fill_text("GAME OVER", game_w / 2.0, mid_y)
             .expect("fill_text failed");
         if state.game_over_timer >= GAME_OVER_PAUSE {
             ctx.set_font("bold 24px monospace");
-            ctx.fill_text("PRESS SPACE TO CONTINUE", viewport_w / 2.0, mid_y + 70.0)
+            ctx.fill_text("PRESS SPACE TO CONTINUE", game_w / 2.0, mid_y + 70.0)
                 .expect("fill_text failed");
         }
     }
@@ -567,44 +612,44 @@ fn draw_scene(
     // Name entry overlay
     if state.phase == GamePhase::NameEntry {
         ctx.set_fill_style_str("rgba(0,0,0,0.80)");
-        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.fill_rect(0.0, 0.0, game_w, game_h);
         ctx.set_fill_style_str("#68fb35");
         ctx.set_text_align("center");
-        let cy = viewport_h / 2.0;
+        let cy = game_h / 2.0;
         ctx.set_font("bold 32px monospace");
         ctx.fill_text(
             &format!("SCORE: {}   LEVEL: {}", state.score, state.level + 1),
-            viewport_w / 2.0, cy - 70.0,
+            game_w / 2.0, cy - 70.0,
         ).expect("fill_text failed");
         ctx.set_font("bold 24px monospace");
-        ctx.fill_text("ENTER YOUR NAME", viewport_w / 2.0, cy - 20.0)
+        ctx.fill_text("ENTER YOUR NAME", game_w / 2.0, cy - 20.0)
             .expect("fill_text failed");
         // Input box
         let cursor = if state.name_input.len() < MAX_NAME_LEN { "_" } else { "" };
         ctx.set_font("bold 40px monospace");
         ctx.fill_text(
             &format!("{}{}", state.name_input, cursor),
-            viewport_w / 2.0, cy + 40.0,
+            game_w / 2.0, cy + 40.0,
         ).expect("fill_text failed");
         ctx.set_font("bold 18px monospace");
         ctx.set_fill_style_str("#aaffaa");
         ctx.fill_text(
             "ENTER — SAVE   ESC — SKIP",
-            viewport_w / 2.0, cy + 100.0,
+            game_w / 2.0, cy + 100.0,
         ).expect("fill_text failed");
     }
 
     // Scoreboard screen
     if state.phase == GamePhase::Scoreboard {
         ctx.set_fill_style_str("rgba(0,0,0,0.92)");
-        ctx.fill_rect(0.0, 0.0, viewport_w, viewport_h);
+        ctx.fill_rect(0.0, 0.0, game_w, game_h);
         ctx.set_fill_style_str("#68fb35");
         ctx.set_text_align("center");
         ctx.set_font("bold 48px monospace");
-        ctx.fill_text("HIGH SCORES", viewport_w / 2.0, 80.0)
+        ctx.fill_text("HIGH SCORES", game_w / 2.0, 80.0)
             .expect("fill_text failed");
 
-        let cx   = viewport_w / 2.0;
+        let cx   = game_w / 2.0;
         let top  = 140.0_f64;
         let row  = 52.0_f64;
 
@@ -635,11 +680,11 @@ fn draw_scene(
 
         ctx.set_font("bold 20px monospace");
         ctx.set_fill_style_str("#aaffaa");
-        ctx.fill_text("H — BACK", cx, viewport_h - 40.0)
+        ctx.fill_text("H — BACK", cx, game_h - 40.0)
             .expect("fill_text failed");
     }
 
-    draw_hud(ctx, state, sprites, viewport_w);
+    draw_hud(ctx, state, sprites, game_w);
 }
 
 // ── HUD ───────────────────────────────────────────────────────────────────────
@@ -651,7 +696,7 @@ fn draw_hud(
     ctx: &CanvasRenderingContext2d,
     state: &GameState,
     sprites: &HashMap<&'static str, HtmlImageElement>,
-    viewport_w: f64,
+    game_w: f64,
 ) {
     ctx.set_fill_style_str("#68fb35");
     ctx.set_font("bold 24px monospace");
@@ -663,7 +708,7 @@ fn draw_hud(
 
     // Level — centred
     ctx.set_text_align("center");
-    ctx.fill_text(&format!("LEVEL  {}", state.level + 1), viewport_w / 2.0, HUD_BASELINE)
+    ctx.fill_text(&format!("LEVEL  {}", state.level + 1), game_w / 2.0, HUD_BASELINE)
         .expect("fill_text failed");
 
     // Lives — ship icons, right-aligned
@@ -673,7 +718,7 @@ fn draw_hud(
         let icon_h = ship_img.natural_height() as f64 * 0.6;
         let gap    = icon_w + 8.0;
         for i in 0..state.lives {
-            let x = viewport_w - HUD_MARGIN - icon_w - i as f64 * gap;
+            let x = game_w - HUD_MARGIN - icon_w - i as f64 * gap;
             let y = HUD_BASELINE - icon_h;
             ctx.draw_image_with_html_image_element_and_dw_and_dh(ship_img, x, y, icon_w, icon_h)
                 .expect("failed to draw life icon");

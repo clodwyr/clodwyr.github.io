@@ -1,0 +1,8 @@
+attribute vec2 a_position;
+varying vec2 v_uv;
+
+void main() {
+    v_uv        = a_position * 0.5 + 0.5;
+    v_uv.y      = 1.0 - v_uv.y;    // flip Y: canvas top-left -> texcoord (0,0)
+    gl_Position = vec4(a_position, 0.0, 1.0);
+}
