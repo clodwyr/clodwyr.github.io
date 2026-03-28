@@ -2579,7 +2579,7 @@ pub const LEVELS: &[LevelSpec] = &[
     LevelSpec {
         pattern: LEVEL_6,
         alien_fire_interval: 20,
-        speed_scale: 0.48,
+        speed_scale: 0.40,
         grid_y_offset: CELL_H * 3.0,
         ufo_first_shot: 6,
         ufo_repeat_shots: 4,

@@ -25,7 +25,9 @@ Deployed to GitHub Pages via GitHub Actions on push to `main`.
 
 ## Pre-merge checklist
 
-Before declaring a feature ready to merge, always run:
+Before declaring a feature ready to merge, work through every item below.
+
+### 1. Tests and build
 
 ```
 cargo test
@@ -39,6 +41,18 @@ Both commands must complete with **zero errors and zero warnings**. In particula
 - `dead_code` — remove the item or add `#[allow(dead_code)]` only if deliberately kept
 
 Do not suppress warnings with `#[allow(...)]` to pass the check — fix the underlying issue.
+
+### 2. Documentation review
+
+Check whether any of the following need updating and fix them on the branch before merging:
+
+- **`README.md`** — project structure tree, controls table, stack description
+- **`diagrams.md`** — state machine phases and transitions, per-frame pipeline, level difficulty table
+- **`AGENTS.md`** — this file, if any process guidance has changed
+
+### 3. Corrections log
+
+If anything had to be corrected during the session (a wrong approach, a bug introduced and then fixed, a misunderstanding), add an entry to **`CORRECTIONS.md`** before merging. The goal is a running record that improves future collaboration — see that file for the format.
 
 ## Stack
 

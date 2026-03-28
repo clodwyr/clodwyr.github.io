@@ -6,7 +6,8 @@ Space Invaders built in Rust, compiled to WebAssembly, deployed to GitHub Pages.
 
 - **Rust** + **wasm-bindgen** + **web-sys** — game logic and DOM/canvas access
 - **Trunk** — builds and bundles the WASM (no JS tooling)
-- **GitHub Pages** — served from the `/docs` folder on `main`
+- **WebGL** — CRT post-process shader layer (barrel distortion, scanlines, glitch)
+- **GitHub Actions** — builds and deploys to GitHub Pages on every push to `main`
 
 A static `<img>` fallback is shown for browsers without Canvas/WebAssembly support.
 
@@ -26,14 +27,9 @@ cargo test         # run unit tests (native, no browser needed)
 
 ## Building for deployment
 
-```sh
-trunk build        # outputs to /docs
-git add docs/
-git commit -m "..."
-git push
-```
-
-GitHub Pages serves from the `/docs` folder on `main`. No CI pipeline — build locally and commit the output.
+Push to `main` — GitHub Actions runs `trunk build --release` and deploys the
+output automatically. There is no need to build or commit the `docs/` folder
+locally; it is produced entirely by CI.
 
 ## Regenerating sprites
 
@@ -53,19 +49,43 @@ Each sprite is defined as rows of `#` (green pixel) and `.` (transparent). The s
 | ufo     | 16×6   | 5     | 80×30px  |
 | ship    | 11×4   | 5     | 55×20px  |
 
+## Controls
+
+| Key        | Action                                      |
+|------------|---------------------------------------------|
+| Space      | Start game / confirm on game-over screen    |
+| ← →        | Move ship                                   |
+| Space      | Fire                                        |
+| P          | Pause / resume                              |
+| Q          | Quit to attract screen                      |
+| S          | Toggle sound on/off                         |
+| H          | View high score table (from attract screen) |
+| Enter      | Submit name on high score entry             |
+| Escape     | Skip name entry                             |
+| Backspace  | Delete last character during name entry     |
+
 ## Project structure
 
 ```
 ├── src/
-│   ├── lib.rs          # WASM entry point (#[wasm_bindgen(start)])
-│   ├── game.rs         # Pure game logic (unit tested)
+│   ├── lib.rs              # WASM entry point (#[wasm_bindgen(start)])
+│   ├── game.rs             # Pure game logic (unit tested)
+│   ├── sound.rs            # Web Audio sound engine
+│   ├── shader/
+│   │   ├── mod.rs
+│   │   ├── glitch.rs       # GlitchTimer state machine (unit tested)
+│   │   ├── post_processor.rs  # WebGL CRT overlay canvas
+│   │   └── glsl/
+│   │       ├── quad.vert   # Fullscreen quad vertex shader
+│   │       └── crt.frag    # CRT effect fragment shader
 │   └── bin/
 │       └── gen_sprites.rs  # Sprite generator (cargo run --bin gen-sprites)
-├── assets/             # Source sprites (PNG)
-├── docs/               # Built output — committed to main, served by Pages
-├── index.html          # Trunk entry point
-├── Trunk.toml          # dist = "docs"
-└── AGENTS.md           # AI agent instructions (TDD, branching)
+├── assets/                 # Source sprites (PNG)
+├── docs/                   # Built output — produced by CI, do not commit manually
+├── index.html              # Trunk entry point
+├── Trunk.toml              # dist = "docs"
+├── diagrams.md             # Architecture diagrams and level reference table
+└── AGENTS.md               # AI agent instructions (TDD, branching, pre-merge checklist)
 ```
 
 ## Workflow
@@ -78,6 +98,6 @@ All work happens on a feature branch. The TDD cycle is:
 
 Then do a visual check in the browser and squash merge into `main`.
 
-## Research 
+## Research
 
 [Space Invaders Design](https://robbiegrier.github.io/assets/research/SpaceInvadersDesignDocFinal.pdf)
