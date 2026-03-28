@@ -158,3 +158,42 @@ S=Squid (30pts)  C=Crab (20pts)  O=Octopus (10pts)
 | 8     | 20           | 0.40        | 3×CELL_H      | **6**       | 6         | 4          |
 | 9     | 17           | 0.36        | 3×CELL_H      | 6           | 5         | 3          |
 | 10    | 15           | 0.32        | 4×CELL_H      | **7**       | 4         | 3          |
+
+---
+
+## 6. WebGL Post-Processing Layer
+
+The game renders to a 2D canvas (`draw_scene`), then each frame that canvas is uploaded as a WebGL texture to a fullscreen overlay canvas (`crt` id). The fragment shader applies CRT-style effects and composites explosion + distortion visuals.
+
+```
+2D canvas (hidden)
+   │  draw_scene writes pixels here
+   ▼
+PostProcessor::process()
+   │  tex_image_2d uploads canvas → TEXTURE_2D
+   │  uniforms set (time, glitch state, explosion slots, distortion slots)
+   ▼
+crt.frag (WebGL fragment shader)
+   ├── 1. Barrel distortion
+   ├── 2. Per-alien local glitch (up to 4 slots: 2 random alive, 2 exploding)
+   ├── 3. Texture sample with optional chroma aberration / band tear (glitch mode)
+   ├── 4. Explosion spark layer (additive, up to 8 simultaneous)
+   ├── 5. Scanlines
+   ├── 6. Vignette
+   └── 7. Green phosphor tint → gl_FragColor (alpha forced to 1.0)
+```
+
+### Explosion sequence
+
+Each exploding alien runs through `EXPLOSION_FRAMES` (22) frames split into two phases:
+
+- **Pre-glitch** (frames 0–5, `t < PRE_T`): the alien's UV position is added to the distortion slots only — screen tears appear at the alien location before anything else happens.
+- **Spark** (frames 6–21, `t ≥ PRE_T`): a procedural 16-spoke star burst radiates outward in alien green. The rotation angle is seeded by position so simultaneous hits show distinct patterns.
+
+### Local alien distortion
+
+Two random alive aliens are selected each cycle and placed in distortion slots 0–1. Each slot is active for ~30 frames (0.5 s) with a 120–240 frame quiet gap (2–4 s). The effect is a horizontal band-tear within a 0.05 UV-radius circle, with per-band random amplitude (reshuffled every ~12 frames) to avoid uniform shimmer.
+
+### CRT toggle
+
+The bypass version of `main()` is kept in a `/* ... */` comment block at the end of `crt.frag`. To disable CRT effects, swap the comment blocks.

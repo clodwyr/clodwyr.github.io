@@ -41,13 +41,15 @@ cargo run --bin gen-sprites
 
 Each sprite is defined as rows of `#` (green pixel) and `.` (transparent). The scale factor and output dimensions are documented inline:
 
-| Sprite  | Grid   | Scale | Output   |
-|---------|--------|-------|----------|
-| crab    | 20×12  | 3     | 60×36px  |
-| squid   | 12×8   | 5     | 60×40px  |
-| octopus | 12×8   | 5     | 60×40px  |
-| ufo     | 16×6   | 5     | 80×30px  |
-| ship    | 11×4   | 5     | 55×20px  |
+| Sprite  | Grid  | Scale | Output  |
+|---------|-------|-------|---------|
+| crab    | 14×8  | 4     | 56×32px |
+| squid   | 8×8   | 5     | 40×40px |
+| octopus | 12×8  | 5     | 60×40px |
+| ufo     | 16×7  | 5     | 80×35px |
+| ship    | 11×4  | 5     | 55×20px |
+
+Alien explosions are rendered procedurally by the WebGL shader layer — no explosion sprites are needed.
 
 ## Controls
 

@@ -220,7 +220,7 @@ pub const GRID_TICK_MAX: u32 = 30;
 /// Frames between grid moves when only one alien remains (fastest) — easy to tune.
 pub const GRID_TICK_MIN: u32 = 4;
 /// How many frames an explosion sprite is shown after an alien is shot.
-pub const EXPLOSION_FRAMES: u8 = 20;
+pub const EXPLOSION_FRAMES: u8 = 22;
 
 /// Pluggable speed strategy — swap for different difficulty curves.
 pub trait SpeedStrategy {

@@ -76,3 +76,14 @@ Each entry covers: what went wrong, what was corrected, and the lesson.
 **Corrected by:** Reading the actual `LEVELS` array from `game.rs` and regenerating the table from code. Also flagged a likely unintended inversion: level 8 `speed_scale` (0.48) is higher than level 7 (0.45), making level 8 slightly slower than level 7.
 
 **Lesson:** Game balance parameters change frequently and documentation falls behind quickly. The pre-merge checklist now explicitly requires reviewing `diagrams.md` against the code before merging.
+
+---
+
+### WebGL explosion invisible on black background (alpha=0 canvas)
+
+**What went wrong:** The 2D game canvas is cleared with `clearRect`, which leaves background pixels as transparent black (`rgba(0,0,0,0)`). When the game canvas is uploaded as a WebGL texture, background fragments have alpha=0. Adding colour to those fragments in the shader had no visible effect because the pixel remained transparent — the HTML body showed through instead.
+
+**Corrected by:** Forcing `gl_FragColor = vec4(color.rgb, 1.0)` in the shader so all output pixels are opaque regardless of texture alpha.
+
+**Lesson:** Additive shader effects on a transparent-background texture produce no visible result on the transparent areas. When debugging a shader effect that isn't appearing, check the alpha channel of the source texture before investigating the colour maths. Ask for a screenshot or browser observation earlier rather than iterating on coordinate maths in the dark.
+

@@ -13,8 +13,8 @@ use game::{
     tick_ground_explosions, tick_level_clear, tick_ufo, try_spawn_ufo,
     AlienKind, ClassicSpeed, CrispMovement, Direction, GamePhase, GameState, Scoreboard,
     ScoreEntry, SpeedStrategy,
-    CELL_H, CELL_W, GAME_H, GAME_OVER_PAUSE, GAME_W, GRID_COLS, GRID_W, MAX_NAME_LEN,
-    PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP, UFO_H, UFO_SCORES, UFO_W,
+    CELL_H, CELL_W, EXPLOSION_FRAMES, GAME_H, GAME_OVER_PAUSE, GAME_W, GRID_COLS, GRID_W,
+    MAX_NAME_LEN, PLAY_MARGIN, SHIP_HALF_H, SHIP_STEP, UFO_EXPLOSION_FRAMES, UFO_H, UFO_SCORES, UFO_W,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -106,10 +106,9 @@ pub fn start() {
     let sprites: Rc<RefCell<HashMap<&'static str, HtmlImageElement>>> =
         Rc::new(RefCell::new(HashMap::new()));
     let loaded = Rc::new(RefCell::new(0u32));
-    const TOTAL: u32 = 11;
+    const TOTAL: u32 = 8;
 
-    for name in ["crab", "crab_f2", "squid", "squid_f2", "octopus", "octopus_f2", "ship",
-                 "crab_exp", "squid_exp", "octopus_exp", "ufo"] {
+    for name in ["crab", "crab_f2", "squid", "squid_f2", "octopus", "octopus_f2", "ship", "ufo"] {
         let img = HtmlImageElement::new().expect("failed to create image");
         img.set_src(&format!("assets/{name}.png"));
 
@@ -192,6 +191,11 @@ fn start_loop(
     let mut sound_initialized = false;
     // UFO sound state — tracks whether the continuous tone is running.
     let mut ufo_sound_active = false;
+
+    // Per-alien distortion: ~0.5 s pop on 1-2 aliens, then quiet for 2-4 s.
+    let mut dist_targets: Vec<[f32; 2]> = vec![];
+    let mut dist_timer: u32 = 0;   // counts down; 0 = time to transition
+    let mut dist_on: bool = false;  // true = currently showing effect
 
     *raf_cb_init.borrow_mut() = Some(Closure::wrap(Box::new(move || {
         // ── Update ────────────────────────────────────────────────────────────
@@ -406,7 +410,92 @@ fn start_loop(
         let rc = (Math::random() * 1024.0) as u32;
         let rb = (Math::random() * 1024.0) as u32;
         let ri = (Math::random() * 1024.0) as u32;
-        post.borrow_mut().process(&canvas, rc, rb, ri);
+
+        // Collect all exploding alien data, then split into pre-glitch and spark phases.
+        // First 6 frames (t < PRE_T): glitch distortion only, no sparks yet.
+        // Remaining frames  (t >= PRE_T): sparks fire, glitch continues alongside.
+        const PRE_T: f32 = 6.0 / EXPLOSION_FRAMES as f32;
+        let (explosions, pre_glitch_pos): (Vec<[f32; 3]>, Vec<[f32; 2]>) = {
+            let s = state.borrow();
+            let grid_left = game_x + (GAME_W - GRID_W) / 2.0 + s.grid.offset_x;
+            let grid_top  = game_y + GAME_H * 0.15 + s.grid.offset_y;
+            let mut exps: Vec<[f32; 3]> = Vec::new();
+            let mut pre:  Vec<[f32; 2]> = Vec::new();
+            for a in s.aliens.iter().filter(|a| !a.alive && a.explosion_timer > 0) {
+                let cx = grid_left + a.col as f64 * CELL_W + CELL_W / 2.0;
+                let cy = grid_top  + a.row as f64 * CELL_H + CELL_H / 2.0;
+                let u  = cx as f32 / viewport_w as f32;
+                let v  = cy as f32 / viewport_h as f32;
+                let t  = 1.0 - a.explosion_timer as f32 / EXPLOSION_FRAMES as f32;
+                if t < PRE_T {
+                    if pre.len() < 2 { pre.push([u, v]); }
+                } else if exps.len() < 8 {
+                    exps.push([u, v, t]);
+                }
+            }
+            if exps.len() < 8 {
+                if let Some(ref ufo) = s.ufo {
+                    if ufo.explosion_timer > 0 {
+                        let cx = game_x + ufo.x + UFO_W / 2.0;
+                        let cy = game_y + ufo.y + UFO_H / 2.0;
+                        let t  = 1.0 - ufo.explosion_timer as f32 / UFO_EXPLOSION_FRAMES as f32;
+                        exps.push([cx as f32 / viewport_w as f32, cy as f32 / viewport_h as f32, t]);
+                    }
+                }
+            }
+            (exps, pre)
+        };
+
+        // Per-alien distortion: pop for ~30 frames (0.5 s), quiet for 2-4 s.
+        if dist_timer == 0 {
+            if dist_on {
+                // End of pop -- clear targets, start quiet gap.
+                dist_targets.clear();
+                dist_on    = false;
+                dist_timer = 120 + (Math::random() * 120.0) as u32;
+            } else {
+                // Start a new pop -- pick 1-2 alive aliens.
+                let s = state.borrow();
+                let grid_left = game_x + (GAME_W - GRID_W) / 2.0 + s.grid.offset_x;
+                let grid_top  = game_y + GAME_H * 0.15 + s.grid.offset_y;
+                let alive: Vec<_> = s.aliens.iter().filter(|a| a.alive).collect();
+                let n = alive.len();
+                if n > 0 {
+                    // Random offset so distortion is not always centred on the sprite
+                    let jitter = || (Math::random() as f32 - 0.5) * 0.04;
+                    let to_uv = |a: &&_| {
+                        let a: &game::Alien = a;
+                        let cx = grid_left + a.col as f64 * CELL_W + CELL_W / 2.0;
+                        let cy = grid_top  + a.row as f64 * CELL_H + CELL_H / 2.0;
+                        [cx as f32 / viewport_w as f32 + jitter(),
+                         cy as f32 / viewport_h as f32 + jitter()]
+                    };
+                    let i0 = (Math::random() * n as f64) as usize;
+                    let i1 = (Math::random() * n as f64) as usize;
+                    dist_targets = if i0 == i1 { vec![to_uv(&alive[i0])] }
+                                   else        { vec![to_uv(&alive[i0]), to_uv(&alive[i1])] };
+                }
+                dist_on    = true;
+                dist_timer = 30; // ~0.5 s at 60 fps
+            }
+        } else {
+            dist_timer -= 1;
+        }
+
+        // Build per-frame distortion list (up to 4 slots):
+        //   0-1: random alive-alien pops (held between refreshes)
+        //   2-3: pre-glitch phase aliens, then spark-phase aliens alongside their burst
+        let mut dist_frame = dist_targets.clone();
+        for pos in &pre_glitch_pos {
+            if dist_frame.len() >= 4 { break; }
+            dist_frame.push(*pos);
+        }
+        for exp in &explosions {
+            if dist_frame.len() >= 4 { break; }
+            dist_frame.push([exp[0], exp[1]]);
+        }
+
+        post.borrow_mut().process(&canvas, rc, rb, ri, &explosions, &dist_frame);
 
         // Schedule next frame
         web_sys::window()
@@ -471,14 +560,8 @@ fn draw_scene(
     let grid_left = (game_w - GRID_W) / 2.0 + state.grid.offset_x;
     let grid_top  = game_h * 0.15 + state.grid.offset_y;
 
-    for alien in state.aliens.iter().filter(|a| a.alive || a.explosion_timer > 0) {
-        let sprite_name = if !alien.alive {
-            match alien.sprite {
-                AlienKind::Crab    => "crab_exp",
-                AlienKind::Squid   => "squid_exp",
-                AlienKind::Octopus => "octopus_exp",
-            }
-        } else {
+    for alien in state.aliens.iter().filter(|a| a.alive) {
+        let sprite_name = {
             match alien.sprite {
                 AlienKind::Crab    => if state.grid.anim_frame { "crab_f2"    } else { "crab"    },
                 AlienKind::Squid   => if state.grid.anim_frame { "squid_f2"   } else { "squid"   },
