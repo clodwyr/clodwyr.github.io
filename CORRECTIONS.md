@@ -71,7 +71,7 @@ Each entry covers: what went wrong, what was corrected, and the lesson.
 
 ### Level difficulty table in diagrams.md drifted from code
 
-**What went wrong:** The level difficulty table in `diagrams.md` still reflected the original design-time values. The user had manually adjusted `speed_scale` and `grid_y_offset` across all ten levels (to improve gameplay balance), but the documentation was not updated. All ten `speed_scale` values and most `grid_y_offset` values were wrong. The `ufo_repeat_shots` column was missing entirely.
+**What went wrong:** The level difficulty table in `diagrams.md` still reflected the original design-time values. The user had manually adjusted `speed_scale` and `grid_y_offset` across all ten levels (to improve game play balance), but the documentation was not updated. All ten `speed_scale` values and most `grid_y_offset` values were wrong. The `ufo_repeat_shots` column was missing entirely.
 
 **Corrected by:** Reading the actual `LEVELS` array from `game.rs` and regenerating the table from code. Also flagged a likely unintended inversion: level 8 `speed_scale` (0.48) is higher than level 7 (0.45), making level 8 slightly slower than level 7.
 
@@ -87,3 +87,10 @@ Each entry covers: what went wrong, what was corrected, and the lesson.
 
 **Lesson:** Additive shader effects on a transparent-background texture produce no visible result on the transparent areas. When debugging a shader effect that isn't appearing, check the alpha channel of the source texture before investigating the colour maths. Ask for a screenshot or browser observation earlier rather than iterating on coordinate maths in the dark.
 
+### Human and LLM/Agent interaction when resolving WebGL explosions
+
+**What went wrong:** The Agent couldn't see the problem and relied on the humans interpretation. This was a complex case, and watching the agent thought process revealed a lot of time was taken exploring different avenues.
+
+**Corrected by:** Asking the Agent to really simplify the steps to take to resolve the issue. Remove the distracting alternative pathways and get human feedback in quick steps.
+
+**Lesson:** When the output is visual and only the human can see it, reasoning without data is guessing. The trigger to stop and ask is: "I cannot verify this myself." The fix is to reduce the problem space — strip back to the smallest verifiable change, get a human observation, then build from there. Temporary functionality loss is acceptable and often faster than preserving it while debugging. When the human gives meta-feedback mid-task ("I'd approach this in smaller steps"), stop the current approach immediately, reset, and propose a minimal next step.
